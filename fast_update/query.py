@@ -150,7 +150,6 @@ def _fast_update(connection, model, objs, fields, batch_size=None):
     non_local_fieldnames = []
     local_fieldnames = []
     for fieldname in fields:
-        # FIXME: pk fieldname should never be listed in fields
         if model._meta.get_field(fieldname) not in model._meta.local_fields:
             non_local_fieldnames.append(fieldname)
         else:
