@@ -15,3 +15,17 @@ class Foo(models.Model):
     f8 = models.IntegerField(default=8)
     f9 = models.IntegerField(default=9)
     f10 = models.IntegerField(default=10)
+
+
+class Child(models.Model):
+    objects = FastUpdateManager()
+
+
+class Parent(models.Model):
+    objects = FastUpdateManager()
+    child = models.ForeignKey(Child, on_delete=models.CASCADE, null=True)
+
+
+class BinaryModel(models.Model):
+    objects = FastUpdateManager()
+    field = models.BinaryField(null=True)
