@@ -6,7 +6,7 @@ from operator import attrgetter
 from django.db import connections, transaction, models
 
 
-NULL: str = '\\N'
+NULL = '\\N'
 BYTE_PLACEHOLDER = '\x00'
 BYTE_PLACEHOLDER_BYTE = b'\x00'
 
@@ -186,8 +186,7 @@ def get_encoder(field):
     raise NotImplementedError(f'no suitable encoder found for field {field}')
 
 
-
-def _write_with_lazy_bytes(f, data, stack):
+def write_lazy(f, data, stack):
     """Execute lazy value encoders."""
     m = memoryview(data)
     idx = 0
@@ -204,11 +203,13 @@ def threaded_copy(cur, fr, tname, columns):
     cur.copy_from(fr, tname, size=65536, columns=columns)
 
 
-def copy_from_rowdata(c, tname, data, columns, lazy):
+def copy_from(c, tname, data, columns, get, encs):
     use_thread = False
     payload = bytearray()
-    for row in data:
-        payload += row
+    lazy = []
+    for o in data:
+        payload += '\t'.join([f'{enc(el, lazy)}' for enc, el in zip(encs, get(o))]).encode('utf-8')
+        payload += b'\n'
         if len(payload) > 65535:
             # if we exceed 64k, switch to threaded chunkwise processing
             if not use_thread:
@@ -219,7 +220,7 @@ def copy_from_rowdata(c, tname, data, columns, lazy):
                 t.start()
                 use_thread = True
             if lazy:
-                _write_with_lazy_bytes(fw, payload, lazy)
+                write_lazy(fw, payload, lazy)
                 lazy.clear()
             else:
                 length = len(payload)
@@ -234,16 +235,20 @@ def copy_from_rowdata(c, tname, data, columns, lazy):
     if use_thread:
         if payload:
             if lazy:
-                _write_with_lazy_bytes(fw, payload, lazy)
+                write_lazy(fw, payload, lazy)
             else:
                 fw.write(payload)
+        # closing order important:
+        # - close write end -> threaded copy_from drains pipe and finishes
+        # - wait for thread termination
+        # - close read end
         fw.close()
         t.join()
         fr.close()
     elif payload:
         if lazy:
             f = BytesIO()
-            _write_with_lazy_bytes(f, payload, lazy)
+            write_lazy(f, payload, lazy)
             f.seek(0)
         else:
             f = BytesIO(payload)
@@ -271,14 +276,6 @@ def update_sql(tname, temp_table, pkname, copy_fields):
     return f'UPDATE "{tname}" SET {cols} FROM "{temp_table}" WHERE {where}'
 
 
-def generate_rowdata(objs, getter, encoders, lazy):
-    for o in objs:
-        yield '\t'.join(
-            [f'{enc(el, lazy) if enc else el}'
-                for enc, el in zip(encoders, getter(o))]
-            ).encode('utf-8') + b'\n'
-
-
 def copy_update(qs, objs, fieldnames):
     # FIXME: needs non local fields patch
     # TODO: allow field encoder overwrites
@@ -291,13 +288,12 @@ def copy_update(qs, objs, fieldnames):
     attnames, colnames, encs, column_def = zip(*[
         (f.attname, f.column, get_encoder(f), (f.column, f.db_type(conn)))
             for f in all_fields])
-    getter = attrgetter(*attnames)
-    lazy = []
+    get = attrgetter(*attnames)
     rows_updated = 0
     with transaction.atomic(using=conn.alias, savepoint=False), conn.cursor() as c:
         temp = f'temp_cu_{model._meta.db_table}'
         c.execute(f'CREATE TEMPORARY TABLE "{temp}" ({prepare_create_columns(column_def)})')
-        copy_from_rowdata(c, temp, generate_rowdata(objs, getter, encs, lazy), colnames, lazy)
+        copy_from(c, temp, objs, colnames, get, encs)
         c.execute(f'ANALYZE "{temp}" ({pk_field.column})')
         c.execute(update_sql(model._meta.db_table, temp, pk_field.column, fields))
         rows_updated = c.rowcount
