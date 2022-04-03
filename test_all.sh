@@ -9,5 +9,5 @@ DBENGINE=mysql coverage run --parallel-mode --source='fast_update' ./example/man
 echo -e "\nTEST: mysql8"
 DBENGINE=mysql8 coverage run --parallel-mode --source='fast_update' ./example/manage.py test exampleapp || exit 1
 coverage combine
-coverage html
 coverage report
+coverage html

@@ -8,7 +8,7 @@ from django.test import TestCase
 from django.db import connection
 from django.db.models import F
 from django.test.utils import CaptureQueriesContext
-from .models import FieldUpdate, Parent, Child, MultiSub
+from .models import FieldUpdate, MultiBase, Parent, Child, MultiSub
 
 dt = datetime.datetime.now()
 dt_utc = datetime.datetime.now(tz=pytz.UTC)
@@ -247,4 +247,52 @@ class TestNonlocalFields(TestCase):
         self.assertEqual(
             list(MultiSub.objects.all().values_list('b1', 'b2', 's1', 's2').order_by('pk')),
             [(None, None, i*100, i*1000) for i in range(10)]
+        )
+
+
+class TestSanityChecks(TestCase):
+    def setUp(self):
+        self.instances = [
+            FieldUpdate.objects.create(**EXAMPLE),
+            FieldUpdate.objects.create(**EXAMPLE)
+        ]
+    
+    def test_sanity_checks(self):
+        # negative batch_size
+        self.assertRaisesMessage(
+            ValueError,
+            'Batch size must be a positive integer.',
+            lambda : FieldUpdate.objects.fast_update(self.instances, ['f_char'], batch_size=-10)
+        )
+        # no fieldnames
+        self.assertRaisesMessage(
+            ValueError,
+            'Field names must be given to fast_update().',
+            lambda : FieldUpdate.objects.fast_update(self.instances, [])
+        )
+        self.assertRaisesMessage(
+            ValueError,
+            'Field names must be given to fast_update().',
+            lambda : FieldUpdate.objects.fast_update(self.instances, fields=None)
+        )
+        # no objs
+        self.assertEqual(FieldUpdate.objects.fast_update([], ['f_char']), 0)
+        # objs with no pk
+        self.assertRaisesMessage(
+            ValueError,
+            'All fast_update() objects must have a primary key set.',
+            lambda : FieldUpdate.objects.fast_update([FieldUpdate(**EXAMPLE), FieldUpdate(**EXAMPLE)], ['f_char'])
+        )
+        # non concrete field
+        mbase = MultiBase.objects.create()
+        self.assertRaisesMessage(
+            ValueError,
+            'fast_update() can only be used with concrete fields.',
+            lambda : MultiBase.objects.fast_update([mbase], ['multisub'])
+        )
+        # pk in fields
+        self.assertRaisesMessage(
+            ValueError,
+            'fast_update() cannot be used with primary key fields.',
+            lambda : FieldUpdate.objects.fast_update(self.instances, ['f_char', 'id'])
         )
