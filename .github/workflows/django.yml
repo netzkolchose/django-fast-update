@@ -98,7 +98,7 @@ jobs:
     - name: Check SQLITE version
       run: |
         ldd $(python -c 'import _sqlite3;print(_sqlite3.__file__)')
-        cp /usr/local/lib/libsqlite3.so.0 /lib/x86_64-linux-gnu/libsqlite3.so.0
+        sudo cp /usr/local/lib/libsqlite3.so.0 /lib/x86_64-linux-gnu/libsqlite3.so.0
         ldd $(python -c 'import _sqlite3;print(_sqlite3.__file__)')
         python -c 'import sqlite3;print("SQLITE VERSION", sqlite3.sqlite_version_info)'
     - name: Install Dependencies
