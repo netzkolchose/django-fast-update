@@ -279,6 +279,7 @@ def update_sql(tname, temp_table, pkname, copy_fields):
 def copy_update(qs, objs, fieldnames):
     # FIXME: needs non local fields patch
     # TODO: allow field encoder overwrites
+    # TODO: expose byte encoding
     qs._for_write = True
     conn = connections[qs.db]
     model = qs.model

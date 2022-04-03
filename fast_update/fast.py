@@ -301,7 +301,7 @@ def fast_update(
         if local_fieldnames:
 
             # prepare all needed arguments for update
-            max_batch_size = connection.ops.bulk_batch_size(['pk'] + fieldnames, objs)
+            max_batch_size = connection.ops.bulk_batch_size(['pk'] + local_fieldnames, objs)
             batch_size = min(batch_size or 2 ** 31, max_batch_size)
             fields = [model._meta.get_field(f) for f in local_fieldnames]
             pk_field = model._meta.pk
