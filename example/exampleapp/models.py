@@ -1,8 +1,7 @@
 from django.db import models
-
 from fast_update.query import FastUpdateManager
 
-# Create your models here.
+
 class Foo(models.Model):
     objects = FastUpdateManager()
     f1 = models.IntegerField(default=1)
@@ -52,3 +51,15 @@ class FieldUpdate(models.Model):
     f_time = models.TimeField(null=True)
     f_url = models.URLField(null=True)
     f_uuid = models.UUIDField(null=True)
+
+
+class MultiBase(models.Model):
+    objects = FastUpdateManager()
+    b1 = models.IntegerField(null=True)
+    b2 = models.IntegerField(null=True)
+
+
+class MultiSub(MultiBase):
+    objects = FastUpdateManager()
+    s1 = models.IntegerField(null=True)
+    s2 = models.IntegerField(null=True)

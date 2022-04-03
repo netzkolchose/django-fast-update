@@ -8,9 +8,7 @@ from django.test import TestCase
 from django.db import connection
 from django.db.models import F
 from django.test.utils import CaptureQueriesContext
-
-from fast_update.fast import fast_update
-from .models import FieldUpdate, Parent, Child
+from .models import FieldUpdate, Parent, Child, MultiSub
 
 dt = datetime.datetime.now()
 dt_utc = datetime.datetime.now(tz=pytz.UTC)
@@ -206,10 +204,47 @@ class TestRaiseOnExpressions(TestCase):
             )
         self.assertEqual(
             FieldUpdate.objects.all().values_list('f_integer', 'f_biginteger', 'f_smallinteger')[0],
-            (123,456,789)
+            (123, 456, 789)
         )
         FieldUpdate.objects.bulk_update([obj], ['f_integer'])
         self.assertEqual(
             FieldUpdate.objects.all().values_list('f_integer', 'f_biginteger', 'f_smallinteger')[0],
-            (456-789,456,789)
+            (456-789, 456, 789)
+        )
+
+
+class TestNonlocalFields(TestCase):
+    def test_local_nonlocal_mixed(self):
+        objs = [MultiSub.objects.create() for _ in range(10)]
+        for i, obj in enumerate(objs):
+            obj.b1 = i
+            obj.b2 = i * 10
+            obj.s1 = i * 100
+            obj.s2 = i * 1000
+        MultiSub.objects.fast_update(objs, ['b1', 'b2', 's1', 's2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().values_list('b1', 'b2', 's1', 's2').order_by('pk')),
+            [(i, i*10, i*100, i*1000) for i in range(10)]
+        )
+    
+    def test_nonlocal_only(self):
+        objs = [MultiSub.objects.create() for _ in range(10)]
+        for i, obj in enumerate(objs):
+            obj.b1 = i
+            obj.b2 = i * 10
+        MultiSub.objects.fast_update(objs, ['b1', 'b2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().values_list('b1', 'b2', 's1', 's2').order_by('pk')),
+            [(i, i*10, None, None) for i in range(10)]
+        )
+
+    def test_local_only(self):
+        objs = [MultiSub.objects.create() for _ in range(10)]
+        for i, obj in enumerate(objs):
+            obj.s1 = i * 100
+            obj.s2 = i * 1000
+        MultiSub.objects.fast_update(objs, ['s1', 's2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().values_list('b1', 'b2', 's1', 's2').order_by('pk')),
+            [(None, None, i*100, i*1000) for i in range(10)]
         )

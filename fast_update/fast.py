@@ -51,14 +51,14 @@ def get_vendor(conn: BaseDatabaseWrapper) -> str:
 
     if conn.vendor == 'mysql':
         try:
-            with transaction.atomic(using=conn.alias, savepoint=False), conn.cursor() as c:
+            with transaction.atomic(using=conn.alias), conn.cursor() as c:
                 c.execute("SELECT foo.0 FROM (VALUES (0, 1), (1, 'zzz'),(2, 'yyy')) as foo")
             SEEN_CONNECTIONS[conn] = 'mysql'
             return 'mysql'
         except ProgrammingError:
             pass
         try:
-            with transaction.atomic(using=conn.alias, savepoint=False), conn.cursor() as c:
+            with transaction.atomic(using=conn.alias), conn.cursor() as c:
                 c.execute("SELECT column_1 FROM (VALUES ROW(1, 'zzz'), ROW(2, 'yyy')) as foo")
             SEEN_CONNECTIONS[conn] = 'mysql8'
             return 'mysql8'
@@ -275,14 +275,14 @@ def fast_update(
     batch_size: Union[int, None]
 ) -> int:
     qs._for_write = True
-    connection = connections[qs.db]
+    conn = connections[qs.db]
     model = qs.model
 
     # fall back to bulk_update if we dont have a working fast_update impl
-    vendor = get_vendor(connection)
+    vendor = get_vendor(conn)
     if not vendor:
         return qs.bulk_update(objs, fieldnames, batch_size)
-    
+
     # filter all non model local fields --> still handled by bulk_update
     non_local_fieldnames = []
     local_fieldnames = []
@@ -291,46 +291,43 @@ def fast_update(
             non_local_fieldnames.append(fieldname)
         else:
             local_fieldnames.append(fieldname)
+
+    if not local_fieldnames:
+        return qs.bulk_update(objs, non_local_fieldnames, batch_size)
     
-    # avoid more expensive doubled updates
-    if non_local_fieldnames and len(local_fieldnames) < 2:
-        return qs.bulk_update(objs, fieldnames, batch_size)
+    # prepare all needed arguments for update
+    max_batch_size = conn.ops.bulk_batch_size(['pk'] + local_fieldnames, objs)
+    batch_size = min(batch_size or 2 ** 31, max_batch_size)
+    fields = [model._meta.get_field(f) for f in local_fieldnames]
+    pk_field = model._meta.pk
+    get = attrgetter(pk_field.attname, *(f.attname for f in fields))
+    prep_save = [pk_field.get_db_prep_save] + [f.get_db_prep_save for f in fields]
+    has_placeholders = any(hasattr(f, 'get_placeholder') for f in fields)
+    compiler = None
+    if vendor == 'postgresql' or has_placeholders:
+        compiler = models.sql.UpdateQuery(model).get_compiler(conn.alias)
     
     rows_updated = 0
-    with transaction.atomic(using=connection.alias, savepoint=False):
-        if local_fieldnames:
-
-            # prepare all needed arguments for update
-            max_batch_size = connection.ops.bulk_batch_size(['pk'] + local_fieldnames, objs)
-            batch_size = min(batch_size or 2 ** 31, max_batch_size)
-            fields = [model._meta.get_field(f) for f in local_fieldnames]
-            pk_field = model._meta.pk
-            get = attrgetter(pk_field.attname, *(f.attname for f in fields))
-            prep_save = [pk_field.get_db_prep_save] + [f.get_db_prep_save for f in fields]
-            has_placeholders = any(hasattr(f, 'get_placeholder') for f in fields)
-            compiler = None
-            if vendor == 'postgresql' or has_placeholders:
-                compiler = models.sql.UpdateQuery(model).get_compiler(connection.alias)
-
-            # update data either batched or in one go
+    with transaction.atomic(using=conn.alias, savepoint=False):
+        # update data either batched or in one go
+        with conn.cursor() as c:
             data = []
             counter = 0
-            with connection.cursor() as c:
-                for o in objs:
-                    counter += 1
-                    data += [p(v, connection) for p, v in zip(prep_save, get(o))]
-                    if counter >= batch_size:
-                        rows_updated += update_from_values(
-                            c, vendor, model._meta.db_table, pk_field, fields,
-                            counter, data, has_placeholders, compiler, connection
-                        )
-                        data = []
-                        counter = 0
-                if data:
+            for o in objs:
+                counter += 1
+                data += [p(v, conn) for p, v in zip(prep_save, get(o))]
+                if counter >= batch_size:
                     rows_updated += update_from_values(
                         c, vendor, model._meta.db_table, pk_field, fields,
-                        counter, data, has_placeholders, compiler, connection
+                        counter, data, has_placeholders, compiler, conn
                     )
+                    data = []
+                    counter = 0
+            if data:
+                rows_updated += update_from_values(
+                    c, vendor, model._meta.db_table, pk_field, fields,
+                    counter, data, has_placeholders, compiler, conn
+                )
 
         # handle remaining non local fields (done by bulk_update for now)
         if non_local_fieldnames:

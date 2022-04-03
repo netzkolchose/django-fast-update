@@ -101,7 +101,6 @@ elif DBENGINE == 'postgres':
     # FIXME: create postgres only fields app and add to INSTALLED_APPS
 elif DBENGINE == 'mysql':
     # docker run --name some-mariadb -e MARIADB_ROOT_PASSWORD=root -e MARIADB_DATABASE=database -p 3306:3306 -d mariadb
-    # docker run --name some-mysql -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=database -p 3306:3306 -d mysql
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
@@ -112,6 +111,19 @@ elif DBENGINE == 'mysql':
             'PORT': 3306,
         }
     }
+elif DBENGINE == 'mysql8':
+    # docker run --name some-mysql -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=database -p 6603:3306 -d mysql
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': 'database',
+            'USER': 'root',
+            'PASSWORD': 'root',
+            'HOST': '127.0.0.1',    # NOTE: 'localhost' does not work here with docker setup!
+            'PORT': 6603,
+        }
+    }
+
 
 
 
