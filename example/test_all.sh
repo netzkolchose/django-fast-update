@@ -1,5 +1,4 @@
 #!/bin/bash
-export PATH="/usr/local/lib:$PATH"
 
 DBENGINE=sqlite coverage run --parallel-mode --source='fast_update' ./manage.py test || exit 1
 DBENGINE=postgres  coverage run --parallel-mode --source='fast_update' ./manage.py test || exit 1
