@@ -1,0 +1,5 @@
+include LICENSE.txt
+include README.md
+recursive-include fast_update/static *
+recursive-include fast_update/templates *
+
