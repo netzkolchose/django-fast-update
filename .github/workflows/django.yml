@@ -95,12 +95,12 @@ jobs:
       uses: actions/setup-python@v2
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Check SQLITE version
-      run: |
-        ldd $(python -c 'import _sqlite3;print(_sqlite3.__file__)')
-        sudo cp /usr/local/lib/libsqlite3.so.0 /lib/x86_64-linux-gnu/libsqlite3.so.0
-        ldd $(python -c 'import _sqlite3;print(_sqlite3.__file__)')
-        python -c 'import sqlite3;print("SQLITE VERSION", sqlite3.sqlite_version_info)'
+#    - name: Check SQLITE version
+#      run: |
+#        ldd $(python -c 'import _sqlite3;print(_sqlite3.__file__)')
+#        sudo cp /usr/local/lib/libsqlite3.so.0 /lib/x86_64-linux-gnu/libsqlite3.so.0
+#        ldd $(python -c 'import _sqlite3;print(_sqlite3.__file__)')
+#        python -c 'import sqlite3;print("SQLITE VERSION", sqlite3.sqlite_version_info)'
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
@@ -109,4 +109,5 @@ jobs:
     - name: Run Tests
       run: |
         cd example
+        export PATH="/usr/local/lib:$PATH"
         ./test_all.sh
