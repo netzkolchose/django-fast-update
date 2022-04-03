@@ -61,6 +61,11 @@ jobs:
       run: |
         cd example
         ./test_all.sh
+    - name: Coveralls
+      uses: AndreMiras/coveralls-python-action@develop
+      with:
+        parallel: true
+        flag-name: Unit Test
 
   coveralls_finish:
     needs: [test]
