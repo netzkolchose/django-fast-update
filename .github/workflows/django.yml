@@ -59,7 +59,12 @@ jobs:
         pip install -r example/requirements.txt
     - name: Run Tests
       run: |
-        ./test_all.sh
+        DBENGINE=sqlite coverage run --parallel-mode --source='fast_update' ./example/manage.py test exampleapp
+        DBENGINE=postgres coverage run --parallel-mode --source='fast_update' ./example/manage.py test exampleapp
+        DBENGINE=mysql coverage run --parallel-mode --source='fast_update' ./example/manage.py test exampleapp
+        DBENGINE=mysql8 coverage run --parallel-mode --source='fast_update' ./example/manage.py test exampleapp
+        coverage combine
+        coverage report
     - name: Coveralls
       uses: AndreMiras/coveralls-python-action@develop
       with:
