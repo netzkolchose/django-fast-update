@@ -97,7 +97,7 @@ jobs:
         python-version: ${{ matrix.python-version }}
     - name: Check SQLITE version
       run: |
-        python -c'import sqlite3;print("SQLITE VERSION", sqlite3.sqlite_version_info)'
+        ldd $(python -c'import _sqlite3;print(_sqlite3.__file__)')
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
