@@ -1,4 +1,4 @@
-name: Django CI
+name: test
 
 on:
   push:
@@ -59,12 +59,7 @@ jobs:
         pip install -r example/requirements.txt
     - name: Run Tests
       run: |
-        DBENGINE=sqlite coverage run --parallel-mode --source='fast_update' ./example/manage.py test exampleapp
-        DBENGINE=postgres coverage run --parallel-mode --source='fast_update' ./example/manage.py test exampleapp
-        DBENGINE=mysql coverage run --parallel-mode --source='fast_update' ./example/manage.py test exampleapp
-        DBENGINE=mysql8 coverage run --parallel-mode --source='fast_update' ./example/manage.py test exampleapp
-        coverage combine
-        coverage report
+        ./test_all.sh
     - name: Coveralls
       uses: AndreMiras/coveralls-python-action@develop
       with:
