@@ -41,8 +41,8 @@ MyModel.objects.fast_update(bunch_of_instances, ['field_a', 'field_b', 'field_c'
 - MySQL 8.0.19+
 
 Note that with `fast_update` f-expressions cannot be used anymore.
-This is a design decision to not penalyze update performance by swiss-army-knife functionality.
-If you have f-expressions in your update data, consider regrouping the update steps and update
+This is a design decision to not penalize update performance by some swiss-army-knife functionality.
+If you have f-expressions in your update data, consider re-grouping the update steps and update
 fields with expression values with `update` or `bulk_update` instead.
 
 
