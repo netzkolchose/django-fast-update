@@ -41,7 +41,7 @@ def get_vendor(conn: BaseDatabaseWrapper) -> str:
 
     if conn.vendor == 'sqlite':
         major, minor, _ = conn.Database.sqlite_version_info
-        if major >= 3 and minor > 32:
+        if (major == 3 and minor > 32) or major > 3:
             SEEN_CONNECTIONS[conn] = 'sqlite'
             return 'sqlite'
         else:
