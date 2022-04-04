@@ -106,6 +106,7 @@ venv.bak/
 
 migrations/
 !example/exampleapp/migrations
+!example/postgres_tests/migrations
 .idea/
 .vscode/
 example/db.sqlite3
