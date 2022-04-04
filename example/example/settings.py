@@ -98,7 +98,7 @@ elif DBENGINE == 'postgres':
             'PORT': 5432,
         }
     }
-    # FIXME: create postgres only fields app and add to INSTALLED_APPS
+    INSTALLED_APPS += ['django.contrib.postgres', 'postgres_tests']
 elif DBENGINE == 'mysql':
     # docker run --name some-mariadb -e MARIADB_ROOT_PASSWORD=root -e MARIADB_DATABASE=database -p 3306:3306 -d mariadb
     DATABASES = {

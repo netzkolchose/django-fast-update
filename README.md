@@ -8,7 +8,7 @@ Faster db updates using `UPDATE FROM VALUES` sql variants.
 
 ### `fast_update` ###
 
-`fast_update` is intended to be used as `bulk_update` replacement.
+`fast_update` is meant to be used as `bulk_update` replacement.
 
 
 #### Example Usage ####
@@ -55,7 +55,6 @@ and field guards.
 
 ### Status ###
 
-Currently early alpha, missing lots of things:
-- `fast_update`: ArrayField / HStore / range field tests for PostgreSQL
+Currently alpha, missing lots of things:
 - `copy_update`: currently incomplete draft (unusable)
 - better docs
