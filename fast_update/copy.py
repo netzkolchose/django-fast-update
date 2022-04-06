@@ -4,6 +4,11 @@ from io import BytesIO
 from binascii import b2a_hex
 from operator import attrgetter
 from django.db import connections, transaction, models
+from typing import Any, Dict, Optional, Sequence
+from decimal import Decimal as Decimal
+from datetime import date, datetime, timedelta, time as dt_time
+from json import dumps
+from uuid import UUID
 
 
 NULL = '\\N'
@@ -12,11 +17,6 @@ BYTE_PLACEHOLDER_BYTE = b'\x00'
 
 # TODO: copy encoders and array impl from playground
 # TODO: tons of tests...
-
-# FIXME: dev helper, to be removed
-def AsNotImpl(v, lazy):
-    """Dummy encoder raising on first encoding attempt."""
-    raise NotImplementedError()
 
 
 def AsNone(v, lazy):
@@ -105,6 +105,100 @@ def BinaryOrNone(v, lazy):
     raise TypeError('expected memoryview, bytes or NoneType')
 
 
+def Boolean(v, lazy):
+    if isinstance(v, bool):
+        return v
+    raise TypeError('expected bool type')
+
+
+def BooleanOrNone(v, lazy):
+    if v is None:
+        return NULL
+    if isinstance(v, bool):
+        return v
+    raise TypeError('expected bool type or NoneType')
+
+
+def Date(v, lazy):
+    if isinstance(v, date):
+        return v
+    raise TypeError('expected date type')
+
+
+def DateOrNone(v, lazy):
+    if v is None:
+        return NULL
+    if isinstance(v, date):
+        return v
+    raise TypeError('expected date type or NoneType')
+
+
+def Datetime(v, lazy):
+    if isinstance(v, datetime):
+        return v
+    raise TypeError('expected datetime type')
+
+
+def DatetimeOrNone(v, lazy):
+    if v is None:
+        return NULL
+    if isinstance(v, datetime):
+        return v
+    raise TypeError('expected datetime type or NoneType')
+
+
+def Numeric(v, lazy):
+    if isinstance(v, Decimal):
+        return v
+    raise TypeError('expected Decimal type')
+
+
+def NumericOrNone(v, lazy):
+    if v is None:
+        return NULL
+    if isinstance(v, Decimal):
+        return v
+    raise TypeError('expected Decimal type or NoneType')
+
+
+def Duration(v, lazy):
+    if isinstance(v, timedelta):
+        return v
+    raise TypeError('expected timedelta type')
+
+
+def DurationOrNone(v, lazy):
+    if v is None:
+        return NULL
+    if isinstance(v, timedelta):
+        return v
+    raise TypeError('expected timedelta type or NoneType')
+
+
+def Float(v, lazy):
+    if isinstance(v, (float, int)):
+        return v
+    raise TypeError('expected float or int type')
+
+
+def FloatOrNone(v, lazy):
+    if v is None:
+        return NULL
+    if isinstance(v, (float, int)):
+        return v
+    raise TypeError('expected float, int or NoneType')
+
+
+def Json(v, lazy):
+    return Text(dumps(v), lazy)
+
+
+def JsonOrNone(v, lazy):
+    if v is None:
+        return NULL
+    return Text(dumps(v), lazy)
+
+
 def Text(v, lazy):
     """
     Test and encode ``str``, raise for any other.
@@ -130,36 +224,63 @@ def TextOrNone(v, lazy):
     raise TypeError('expected str or NoneType')
 
 
+def Time(v, lazy):
+    if isinstance(v, dt_time):
+        return v
+    raise TypeError('expected datetime.time type')
+
+
+def TimeOrNone(v, lazy):
+    if v is None:
+        return NULL
+    if isinstance(v, dt_time):
+        return v
+    raise TypeError('expected datetime.time type or NoneType')
+
+
+def Uuid(v, lazy):
+    if isinstance(v, UUID):
+        return v
+    raise TypeError('expected UUID type')
+
+
+def UuidOrNone(v, lazy):
+    if v is None:
+        return NULL
+    if isinstance(v, UUID):
+        return v
+    raise TypeError('expected UUID type or NoneType')
+
+
 ENCODERS = {
     models.AutoField: (Int, IntOrNone),
     models.BigAutoField: (Int, IntOrNone),
     models.BigIntegerField: (Int, IntOrNone),
     models.BinaryField: (Binary, BinaryOrNone),
-    models.BooleanField: (AsNotImpl, AsNotImpl), #
+    models.BooleanField: (Boolean, BooleanOrNone),
     models.CharField: (Text, TextOrNone),
-    models.DateField: (AsNotImpl, AsNotImpl), #
-    models.DateTimeField: (AsNotImpl, AsNotImpl), #
-    models.DecimalField: (AsNotImpl, AsNotImpl), #
-    models.DurationField: (AsNotImpl, AsNotImpl), #
-    models.EmailField: (AsNotImpl, AsNotImpl), #
-    models.FileField: (AsNotImpl, AsNotImpl), # should we disallow this? any workaround possible?
-    models.FilePathField: (AsNotImpl, AsNotImpl), # how to go about this one?
-    models.FloatField: (AsNotImpl, AsNotImpl), #
-    models.GenericIPAddressField: (AsNotImpl, AsNotImpl), #
-    models.ImageField: (AsNotImpl, AsNotImpl), # same as FileField?
+    models.DateField: (Date, DateOrNone),
+    models.DateTimeField: (Datetime, DatetimeOrNone),
+    models.DecimalField: (Numeric, NumericOrNone),
+    models.DurationField: (Duration, DurationOrNone),
+    models.EmailField: (Text, TextOrNone),
+    #models.FileField: (AsNotImpl, AsNotImpl), # should we disallow this? any workaround possible?
+    #models.FilePathField: (AsNotImpl, AsNotImpl), # how to go about this one?
+    models.FloatField: (Float, FloatOrNone),
+    models.GenericIPAddressField: (Text, TextOrNone),
+    #models.ImageField: (AsNotImpl, AsNotImpl), # same as FileField?
     models.IntegerField: (Int, IntOrNone),
-    models.JSONField: (AsNotImpl, AsNotImpl), #
-    models.PositiveBigIntegerField: (AsNotImpl, AsNotImpl), #
-    models.PositiveIntegerField: (AsNotImpl, AsNotImpl), #
-    models.PositiveSmallIntegerField: (AsNotImpl, AsNotImpl), #
-    models.SlugField: (Text, TextOrNone),  # check whether it is always TEXT format safe
+    models.JSONField: (Json, JsonOrNone),
+    models.PositiveBigIntegerField: (Int, IntOrNone),
+    models.PositiveIntegerField: (Int, IntOrNone),
+    models.PositiveSmallIntegerField: (Int, IntOrNone),
+    models.SlugField: (Text, TextOrNone),
     models.SmallAutoField: (Int, IntOrNone),
     models.SmallIntegerField: (Int, IntOrNone),
     models.TextField: (Text, TextOrNone),
-    models.TimeField: (AsNotImpl, AsNotImpl), #
+    models.TimeField: (Time, TimeOrNone),
     models.URLField: (Text, TextOrNone),
-    models.UUIDField: (AsNotImpl, AsNotImpl), #
-    models.ForeignKey: (AsNotImpl, AsNotImpl), # FIXME: needs special treatment on caller level?
+    models.UUIDField: (Uuid, UuidOrNone),
     #ArrayField, HStore, Range ...
 }
 
@@ -203,12 +324,12 @@ def threaded_copy(cur, fr, tname, columns):
     cur.copy_from(fr, tname, size=65536, columns=columns)
 
 
-def copy_from(c, tname, data, columns, get, encs):
+def copy_from(c, tname, data, columns, get, encs, encoding):
     use_thread = False
     payload = bytearray()
     lazy = []
     for o in data:
-        payload += '\t'.join([f'{enc(el, lazy)}' for enc, el in zip(encs, get(o))]).encode('utf-8')
+        payload += '\t'.join([f'{enc(el, lazy)}' for enc, el in zip(encs, get(o))]).encode(encoding)
         payload += b'\n'
         if len(payload) > 65535:
             # if we exceed 64k, switch to threaded chunkwise processing
@@ -276,27 +397,54 @@ def update_sql(tname, temp_table, pkname, copy_fields):
     return f'UPDATE "{tname}" SET {cols} FROM "{temp_table}" WHERE {where}'
 
 
-def copy_update(qs, objs, fieldnames):
-    # FIXME: needs non local fields patch
-    # TODO: allow field encoder overwrites
-    # TODO: expose byte encoding
+def copy_update(
+    qs: models.QuerySet,
+    objs: Sequence[models.Model],
+    fieldnames: Sequence[str],
+    transport_encoding: Optional[str] = 'utf-8',
+    field_encoders: Optional[Dict[str, Any]] = None
+) -> int:
     qs._for_write = True
     conn = connections[qs.db]
     model = qs.model
+
+    # filter all non model local fields --> still handled by bulk_update
+    non_local_fieldnames = []
+    local_fieldnames = []
+    for fieldname in fieldnames:
+        if model._meta.get_field(fieldname) not in model._meta.local_fields:
+            non_local_fieldnames.append(fieldname)
+        else:
+            local_fieldnames.append(fieldname)
+
+    if not local_fieldnames:
+        return qs.bulk_update(objs, non_local_fieldnames)
+
     pk_field = model._meta.pk
-    fields = [model._meta.get_field(fname) for fname in fieldnames]
+    fields = [model._meta.get_field(fname) for fname in local_fieldnames]
     all_fields = [pk_field] + fields
     attnames, colnames, encs, column_def = zip(*[
         (f.attname, f.column, get_encoder(f), (f.column, f.db_type(conn)))
             for f in all_fields])
+    if field_encoders:
+        for fname, encoder in field_encoders.items():
+            if fname in attnames:
+                encs[attnames.index(fname)] = encoder
     get = attrgetter(*attnames)
     rows_updated = 0
     with transaction.atomic(using=conn.alias, savepoint=False), conn.cursor() as c:
         temp = f'temp_cu_{model._meta.db_table}'
+        c.execute(f'DROP TABLE IF EXISTS "{temp}"')
         c.execute(f'CREATE TEMPORARY TABLE "{temp}" ({prepare_create_columns(column_def)})')
-        copy_from(c, temp, objs, colnames, get, encs)
+        copy_from(c, temp, objs, colnames, get, encs, transport_encoding)
         c.execute(f'ANALYZE "{temp}" ({pk_field.column})')
         c.execute(update_sql(model._meta.db_table, temp, pk_field.column, fields))
         rows_updated = c.rowcount
         c.execute(f'DROP TABLE "{temp}"')
+
+        # handle remaining non local fields (done by bulk_update for now)
+        if non_local_fieldnames:
+            _rows_updated = qs.bulk_update(objs, non_local_fieldnames)
+            rows_updated = max(rows_updated, _rows_updated or 0)
+
     return rows_updated

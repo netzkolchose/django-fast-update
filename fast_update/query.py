@@ -61,6 +61,7 @@ class FastUpdateQuerySet(QuerySet):
         if connection.vendor != 'postgresql':
             raise NotSupportedError(
                 f"copy_update() is not supported on '{connection.vendor}' backend")
+        objs = tuple(objs)
         sanity_check(self.model, objs, fields, 123)
         return copy_update(self, objs, fields)
     

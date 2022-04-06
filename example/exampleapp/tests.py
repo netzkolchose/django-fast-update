@@ -22,6 +22,13 @@ SINGLES = {
     'f_boolean': [None, True, False],
     'f_char': [None, '', '\t\n"{\'}]'],
     'f_date': [None, dt.date(), datetime.date(1, 1, 1), datetime.date(9999, 12, 31)],
+    'f_datetime': [
+        None,
+        dt_utc,
+        pytz.timezone('Europe/Berlin').localize(dt),
+        datetime.datetime(1,1,1,1,1,1,1, tzinfo=pytz.UTC),
+        datetime.datetime(9999,12,31,23,59,59,999999, tzinfo=pytz.UTC)
+    ],
     'f_decimal': [None, Decimal(0), Decimal('2.0'), Decimal('-22.12345')],
     'f_duration': [
         None,
