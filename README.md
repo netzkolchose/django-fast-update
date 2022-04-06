@@ -6,7 +6,7 @@
 
 Faster db updates using `UPDATE FROM VALUES` sql variants.
 
-### `fast_update` ###
+### fast_update ###
 
 `fast_update` is meant to be used as `bulk_update` replacement.
 
@@ -14,7 +14,7 @@ Faster db updates using `UPDATE FROM VALUES` sql variants.
 #### Example Usage ####
 
 With attaching `FastUpdateManager` as a manager to your model, `fast_update`
-can be used instead of `bulk_update` like this:
+can be used instead of `bulk_update`, e.g.:
 
 ```python
 from django.db import models
@@ -46,15 +46,17 @@ If you have f-expressions in your update data, consider re-grouping the update s
 fields with expression values with `update` or `bulk_update` instead.
 
 
-### `copy_update` ###
+### copy_update ###
 
 The package also contains an early draft `copy_update`, for table updates with `COPY FROM`
-for PostgreSQL. This is not yet fully implemented, it still misses several value encoders
-and field guards.
+for PostgreSQL. This is not yet fully implemented, currently missing pieces:
+- array support
+- hstore, range fields
+- derive transport encoding from psycopg2 connection settings
 
 
 ### Status ###
 
-Currently alpha, missing lots of things:
-- `copy_update`: currently incomplete draft (unusable)
-- better docs
+Currently alpha, left to do:
+- finish `copy_update`
+- some better docs
