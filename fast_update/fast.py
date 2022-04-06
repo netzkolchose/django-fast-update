@@ -241,7 +241,7 @@ def fast_update(
 
     # fall back to bulk_update if we dont have a working fast_update impl
     vendor = get_vendor(conn)
-    if not vendor:
+    if not vendor:  # pragma: no cover
         return qs.bulk_update(objs, fieldnames, batch_size)
 
     # filter all non model local fields --> still handled by bulk_update
