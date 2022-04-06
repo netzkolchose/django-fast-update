@@ -18,34 +18,13 @@ BYTE_PLACEHOLDER_BYTE = b'\x00'
 # TODO: copy encoders and array impl from playground
 # TODO: tons of tests...
 
-
-def AsNone(v, lazy):
-    """Treat field value as ``None`` converted to NULL."""
-    return NULL
-
-
-def AsIs(v, lazy):
+def textEscape(v):
     """
-    Field value passed along unchecked.
-
-    Can be used for a performance gain, if all provided field values
-    are known to correctly translate into Postgres' COPY TEXT format
-    by python's string formatting. That is sometimes the case for values,
-    where type checking/narrowing happened in an earlier step.
-    Python types known to work that way are: int, float, ...
-    Nullish field values may use ``AsIsOrNone`` instead.
-    When used for string values, make sure that the strings never contain
-    characters, that need explicit escaping in the TEXT format.
+    Escape str-like data for postgres' TEXT format.
     """
-    # FIXME: move description above to top level docs
-    return v
-
-
-def AsIsOrNone(v, lazy):
-    """Same as ``AsIs``, additionally handling ``None`` as NULL."""
-    if v is None:
-        return NULL
-    return v
+    return (v.replace('\\', '\\\\')
+        .replace('\b', '\\b').replace('\f', '\\f').replace('\n', '\\n')
+        .replace('\r', '\\r').replace('\t', '\\t').replace('\v', '\\v'))
 
 
 def Int(v, lazy):
@@ -116,13 +95,13 @@ def BooleanOrNone(v, lazy):
         return NULL
     if isinstance(v, bool):
         return v
-    raise TypeError('expected bool type or NoneType')
+    raise TypeError('expected bool or NoneType')
 
 
 def Date(v, lazy):
     if isinstance(v, date):
         return v
-    raise TypeError('expected date type')
+    raise TypeError('expected datetime.date type')
 
 
 def DateOrNone(v, lazy):
@@ -130,7 +109,7 @@ def DateOrNone(v, lazy):
         return NULL
     if isinstance(v, date):
         return v
-    raise TypeError('expected date type or NoneType')
+    raise TypeError('expected datetime.date or NoneType')
 
 
 def Datetime(v, lazy):
@@ -144,7 +123,7 @@ def DatetimeOrNone(v, lazy):
         return NULL
     if isinstance(v, datetime):
         return v
-    raise TypeError('expected datetime type or NoneType')
+    raise TypeError('expected datetime or NoneType')
 
 
 def Numeric(v, lazy):
@@ -158,7 +137,7 @@ def NumericOrNone(v, lazy):
         return NULL
     if isinstance(v, Decimal):
         return v
-    raise TypeError('expected Decimal type or NoneType')
+    raise TypeError('expected Decimal or NoneType')
 
 
 def Duration(v, lazy):
@@ -172,7 +151,7 @@ def DurationOrNone(v, lazy):
         return NULL
     if isinstance(v, timedelta):
         return v
-    raise TypeError('expected timedelta type or NoneType')
+    raise TypeError('expected timedelta or NoneType')
 
 
 def Float(v, lazy):
@@ -190,13 +169,13 @@ def FloatOrNone(v, lazy):
 
 
 def Json(v, lazy):
-    return Text(dumps(v), lazy)
+    return textEscape(dumps(v))
 
 
 def JsonOrNone(v, lazy):
     if v is None:
         return NULL
-    return Text(dumps(v), lazy)
+    return textEscape(dumps(v))
 
 
 def Text(v, lazy):
@@ -207,9 +186,7 @@ def Text(v, lazy):
     for the TEXT format of COPY FROM.
     """
     if isinstance(v, str):
-        return (v.replace('\\', '\\\\')
-            .replace('\b', '\\b').replace('\f', '\\f').replace('\n', '\\n')
-            .replace('\r', '\\r').replace('\t', '\\t').replace('\v', '\\v'))
+        return textEscape(v)
     raise TypeError('expected str type')
 
 
@@ -218,9 +195,7 @@ def TextOrNone(v, lazy):
     if v is None:
         return NULL
     if isinstance(v, str):
-        return (v.replace('\\', '\\\\')
-            .replace('\b', '\\b').replace('\f', '\\f').replace('\n', '\\n')
-            .replace('\r', '\\r').replace('\t', '\\t').replace('\v', '\\v'))
+        return textEscape(v)
     raise TypeError('expected str or NoneType')
 
 
@@ -235,7 +210,7 @@ def TimeOrNone(v, lazy):
         return NULL
     if isinstance(v, dt_time):
         return v
-    raise TypeError('expected datetime.time type or NoneType')
+    raise TypeError('expected datetime.time or NoneType')
 
 
 def Uuid(v, lazy):
@@ -249,7 +224,7 @@ def UuidOrNone(v, lazy):
         return NULL
     if isinstance(v, UUID):
         return v
-    raise TypeError('expected UUID type or NoneType')
+    raise TypeError('expected UUID or NoneType')
 
 
 ENCODERS = {

@@ -1,5 +1,5 @@
 from django.test import TestCase
-from .models import PostgresFields
+from .models import PostgresFields, FieldUpdateNotNull
 from exampleapp.models import FieldUpdate
 from psycopg2.extras import NumericRange, DateTimeTZRange, DateRange
 import datetime
@@ -181,61 +181,89 @@ class TestCopyUpdate(TestCase):
             res_a, res_b = FieldUpdate.objects.all().values(fieldname)
             self.assertEqual(res_b[fieldname], res_a[fieldname])
 
+    def _single_raise(self, fieldname, wrong_value, msg):
+        a = FieldUpdate.objects.create()
+        setattr(a, fieldname, wrong_value)
+        self.assertRaisesMessage(TypeError, msg, lambda : FieldUpdate.objects.copy_update([a], [fieldname]))
+
     def test_biginteger(self):
         self._single('f_biginteger')
+        self._single_raise('f_biginteger', 'wrong', 'expected int or NoneType')
+
 
     def test_binary(self):
         self._single('f_binary')
+        # test big binary data
+        data = b'1234567890' * 10000
+        obj = FieldUpdate.objects.all().first()
+        obj.f_binary = data
+        FieldUpdate.objects.copy_update([obj], ['f_binary'])
+        self.assertEqual(FieldUpdate.objects.get(pk=obj.pk).f_binary.tobytes(), data)
+        self._single_raise('f_binary', 'wrong', 'expected memoryview, bytes or NoneType')
 
     def test_boolean(self):
         self._single('f_boolean')
+        self._single_raise('f_boolean', 'wrong', 'expected bool or NoneType')
     
     def test_char(self):
         self._single('f_char')
+        self._single_raise('f_char', 123, 'expected str or NoneType')
 
     def test_date(self):
         self._single('f_date')
+        self._single_raise('f_date', 'wrong', 'expected datetime.date or NoneType')
 
     def test_datetime(self):
         self._single('f_datetime')
+        self._single_raise('f_datetime', 'wrong', 'expected datetime or NoneType')
 
     def test_decimal(self):
         self._single('f_decimal')
+        self._single_raise('f_decimal', 'wrong', 'expected Decimal or NoneType')
 
     def test_duration(self):
         self._single('f_duration')
+        self._single_raise('f_duration', 'wrong', 'expected timedelta or NoneType')
 
     def test_email(self):
         self._single('f_email')
+        self._single_raise('f_email', 123, 'expected str or NoneType')
 
     def test_float(self):
         self._single('f_float')
+        self._single_raise('f_float', 'wrong', 'expected float, int or NoneType')
 
     def test_integer(self):
         self._single('f_integer')
+        self._single_raise('f_integer', 'wrong', 'expected int or NoneType')
 
     def test_ip(self):
         self._single('f_ip')
+        self._single_raise('f_ip', 123, 'expected str or NoneType')
 
     def test_json(self):
         self._single('f_json')
 
     def test_slug(self):
         self._single('f_slug')
+        self._single_raise('f_slug', 123, 'expected str or NoneType')
 
     def test_text(self):
         self._single('f_text')
+        self._single_raise('f_text', 123, 'expected str or NoneType')
 
     def test_time(self):
         self._single('f_time')
+        self._single_raise('f_time', 'wrong', 'expected datetime.time or NoneType')
 
     def test_uuid(self):
         self._single('f_uuid')
+        self._single_raise('f_uuid', 'wrong', 'expected UUID or NoneType')
 
     def test_updatefull_multiple(self):
         a = []
         b = []
-        for _ in range(100):
+        for _ in range(1000):
             a.append(FieldUpdate.objects.create())
             b.append(FieldUpdate.objects.create())
         update_a = []
@@ -247,6 +275,27 @@ class TestCopyUpdate(TestCase):
         FieldUpdate.objects.bulk_update(update_a, CU_FIELDS)
         FieldUpdate.objects.copy_update(update_b, CU_FIELDS)
         results = list(FieldUpdate.objects.all().values(*CU_FIELDS))
+        first = results[0]
+        for r in results[1:]:
+            for f in CU_FIELDS:
+                self.assertEqual(r[f], first[f])
+
+class TestCopyUpdateNotNull(TestCase):
+    def test_updatefull_multiple(self):
+        a = []
+        b = []
+        for _ in range(1000):
+            a.append(FieldUpdateNotNull.objects.create())
+            b.append(FieldUpdateNotNull.objects.create())
+        update_a = []
+        for _a in a:
+            update_a.append(FieldUpdateNotNull(pk=_a.pk, **CU_EXAMPLE))
+        update_b = []
+        for _b in b:
+            update_b.append(FieldUpdateNotNull(pk=_b.pk, **CU_EXAMPLE))
+        FieldUpdateNotNull.objects.bulk_update(update_a, CU_FIELDS)
+        FieldUpdateNotNull.objects.copy_update(update_b, CU_FIELDS)
+        results = list(FieldUpdateNotNull.objects.all().values(*CU_FIELDS))
         first = results[0]
         for r in results[1:]:
             for f in CU_FIELDS:
