@@ -13,7 +13,6 @@ def sanity_check(model, objs, fields, batch_size):
         raise ValueError('Batch size must be a positive integer.')
     if not fields:
         raise ValueError('Field names must be given to fast_update().')
-    objs = tuple(objs)
     if not objs:
         return 0
     if any(obj.pk is None for obj in objs):
@@ -43,6 +42,7 @@ class FastUpdateQuerySet(QuerySet):
         """
         TODO...
         """
+        objs = tuple(objs)
         sanity_check(self.model, objs, fields, batch_size)
         return fast_update(self, objs, fields, batch_size)
 
