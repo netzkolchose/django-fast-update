@@ -1,11 +1,12 @@
 from django.test import TestCase
-from .models import PostgresFields, FieldUpdateNotNull
-from exampleapp.models import FieldUpdate
+from .models import PostgresFields, FieldUpdateNotNull, CustomField
+from exampleapp.models import FieldUpdate, MultiSub, Child, Parent
 from psycopg2.extras import NumericRange, DateTimeTZRange, DateRange
 import datetime
 import pytz
 import uuid
 from decimal import Decimal
+from fast_update.copy import get_encoder, register_fieldclass, Int, IntOrNone
 
 
 dt = datetime.datetime.now()
@@ -146,7 +147,7 @@ CU_SINGLES = {
 
 CU_EXAMPLE = {
     'f_biginteger': -123456789123,
-    'f_binary': b'\x00\x80\xff',
+    'f_binary': b'\x00\x80\xff1234567',
     'f_boolean': True,
     'f_char': 'with umläütß€',
     'f_date': dt.date(),
@@ -156,7 +157,7 @@ CU_EXAMPLE = {
     'f_email': 'test@example.com',
     'f_float': -1.23456,
     'f_integer': -123456,
-    'f_ip': '127.0.0.1',
+    'f_ip': '1.2.3.4',
     'f_json': {'a': 123.45, 'b': 'umläütß€'},
     'f_slug': 'umläütß€',
     'f_smallinteger': -12345,
@@ -193,13 +194,21 @@ class TestCopyUpdate(TestCase):
 
     def test_binary(self):
         self._single('f_binary')
-        # test big binary data
+        self._single_raise('f_binary', 'wrong', 'expected memoryview, bytes or NoneType')
+    
+    def test_binary_big(self):
+        # >64k
         data = b'1234567890' * 10000
-        obj = FieldUpdate.objects.all().first()
+        obj = FieldUpdate.objects.create()
         obj.f_binary = data
         FieldUpdate.objects.copy_update([obj], ['f_binary'])
         self.assertEqual(FieldUpdate.objects.get(pk=obj.pk).f_binary.tobytes(), data)
-        self._single_raise('f_binary', 'wrong', 'expected memoryview, bytes or NoneType')
+        # <64k
+        data = b'1234567890' * 1000
+        obj = FieldUpdate.objects.create()
+        obj.f_binary = data
+        FieldUpdate.objects.copy_update([obj], ['f_binary'])
+        self.assertEqual(FieldUpdate.objects.get(pk=obj.pk).f_binary.tobytes(), data)
 
     def test_boolean(self):
         self._single('f_boolean')
@@ -263,7 +272,7 @@ class TestCopyUpdate(TestCase):
     def test_updatefull_multiple(self):
         a = []
         b = []
-        for _ in range(1000):
+        for _ in range(100):
             a.append(FieldUpdate.objects.create())
             b.append(FieldUpdate.objects.create())
         update_a = []
@@ -280,11 +289,129 @@ class TestCopyUpdate(TestCase):
             for f in CU_FIELDS:
                 self.assertEqual(r[f], first[f])
 
+    def test_big_lazy(self):
+        obj = FieldUpdate.objects.create()
+        obj.f_binary = b'0' * 100000
+        obj.f_text = 'x' * 100000
+        FieldUpdate.objects.copy_update([obj], ['f_binary', 'f_text'])
+        self.assertEqual(FieldUpdate.objects.get(pk=obj.pk).f_binary.tobytes(), b'0' * 100000)
+        self.assertEqual(FieldUpdate.objects.get(pk=obj.pk).f_text, 'x' * 100000)
+    
+    def test_lazy_after_big(self):
+        obj1 = FieldUpdate.objects.create()
+        obj1.f_text = 'x' * 70000
+        obj2 = FieldUpdate.objects.create()
+        obj2.f_binary = b'0' * 100000
+        FieldUpdate.objects.copy_update([obj1, obj2], ['f_binary', 'f_text'])
+        self.assertEqual(FieldUpdate.objects.get(pk=obj1.pk).f_text, 'x' * 70000)
+        self.assertEqual(FieldUpdate.objects.get(pk=obj2.pk).f_binary.tobytes(), b'0' * 100000)
+
 class TestCopyUpdateNotNull(TestCase):
+    def _single(self, fieldname):
+        for value in CU_SINGLES[fieldname]:
+            if value is None:
+                continue
+            FieldUpdateNotNull.objects.all().delete()
+            a = FieldUpdateNotNull.objects.create()
+            b = FieldUpdateNotNull.objects.create()
+            update_a = FieldUpdateNotNull(pk=a.pk, **{fieldname: value})
+            update_b = FieldUpdateNotNull(pk=b.pk, **{fieldname: value})
+            FieldUpdateNotNull.objects.bulk_update([update_a], [fieldname])
+            FieldUpdateNotNull.objects.copy_update([update_b], [fieldname])
+            res_a, res_b = FieldUpdateNotNull.objects.all().values(fieldname)
+            self.assertEqual(res_b[fieldname], res_a[fieldname])
+
+    def _single_raise(self, fieldname, wrong_value, msg):
+        a = FieldUpdateNotNull.objects.create()
+        setattr(a, fieldname, wrong_value)
+        self.assertRaisesMessage(TypeError, msg, lambda : FieldUpdateNotNull.objects.copy_update([a], [fieldname]))
+
+    def test_biginteger(self):
+        self._single('f_biginteger')
+        self._single_raise('f_biginteger', 'wrong', 'expected int type')
+
+    def test_binary(self):
+        self._single('f_binary')
+        self._single_raise('f_binary', 'wrong', 'expected memoryview or bytes type')
+    
+    def test_binary_big(self):
+        # >64k
+        data = b'1234567890' * 10000
+        obj = FieldUpdateNotNull.objects.create()
+        obj.f_binary = data
+        FieldUpdateNotNull.objects.copy_update([obj], ['f_binary'])
+        self.assertEqual(FieldUpdateNotNull.objects.get(pk=obj.pk).f_binary.tobytes(), data)
+        # <64k
+        data = b'1234567890' * 1000
+        obj = FieldUpdateNotNull.objects.create()
+        obj.f_binary = data
+        FieldUpdateNotNull.objects.copy_update([obj], ['f_binary'])
+        self.assertEqual(FieldUpdateNotNull.objects.get(pk=obj.pk).f_binary.tobytes(), data)
+
+    def test_boolean(self):
+        self._single('f_boolean')
+        self._single_raise('f_boolean', 'wrong', 'expected bool type')
+    
+    def test_char(self):
+        self._single('f_char')
+        self._single_raise('f_char', 123, 'expected str type')
+
+    def test_date(self):
+        self._single('f_date')
+        self._single_raise('f_date', 'wrong', 'expected datetime.date type')
+
+    def test_datetime(self):
+        self._single('f_datetime')
+        self._single_raise('f_datetime', 'wrong', 'expected datetime type')
+
+    def test_decimal(self):
+        self._single('f_decimal')
+        self._single_raise('f_decimal', 'wrong', 'expected Decimal type')
+
+    def test_duration(self):
+        self._single('f_duration')
+        self._single_raise('f_duration', 'wrong', 'expected timedelta type')
+
+    def test_email(self):
+        self._single('f_email')
+        self._single_raise('f_email', 123, 'expected str type')
+
+    def test_float(self):
+        self._single('f_float')
+        self._single_raise('f_float', 'wrong', 'expected float or int type')
+
+    def test_integer(self):
+        self._single('f_integer')
+        self._single_raise('f_integer', 'wrong', 'expected int type')
+
+    def test_ip(self):
+        self._single('f_ip')
+        self._single_raise('f_ip', 123, 'expected str type')
+
+    def test_json(self):
+        self._single('f_json')
+
+    def test_slug(self):
+        self._single('f_slug')
+        self._single_raise('f_slug', 123, 'expected str type')
+
+    def test_text(self):
+        self._single('f_text')
+        self._single_raise('f_text', 123, 'expected str type')
+
+    def test_time(self):
+        self._single('f_time')
+        self._single_raise('f_time', 'wrong', 'expected datetime.time type')
+
+    def test_uuid(self):
+        self._single('f_uuid')
+        self._single_raise('f_uuid', 'wrong', 'expected UUID type')
+
+
     def test_updatefull_multiple(self):
         a = []
         b = []
-        for _ in range(1000):
+        for _ in range(100):
             a.append(FieldUpdateNotNull.objects.create())
             b.append(FieldUpdateNotNull.objects.create())
         update_a = []
@@ -300,3 +427,83 @@ class TestCopyUpdateNotNull(TestCase):
         for r in results[1:]:
             for f in CU_FIELDS:
                 self.assertEqual(r[f], first[f])
+        # force threaded write
+        update_c = update_b * 100
+        FieldUpdateNotNull.objects.copy_update(update_c, CU_FIELDS)
+        results = list(FieldUpdateNotNull.objects.all().values(*CU_FIELDS))
+        for r in results[201:]:
+            for f in CU_FIELDS:
+                self.assertEqual(r[f], first[f])
+
+
+class TestFieldRegistration(TestCase):
+    def test_register(self):
+        f = CustomField()
+        f_null = CustomField(null=True)
+        self.assertRaisesMessage(
+            NotImplementedError,
+            'no suitable encoder found for field <postgres_tests.models.CustomField>',
+            lambda : get_encoder(f)
+        )
+        register_fieldclass(CustomField, Int, IntOrNone)
+        self.assertEqual(get_encoder(f), Int)
+        self.assertEqual(get_encoder(f_null), IntOrNone)
+
+
+class TestForeignkeyField(TestCase):
+    def test_move_parents(self):
+        childA = Child.objects.create()
+        childB = Child.objects.create()
+        parents = [Parent.objects.create(child=childA) for _ in range(10)]
+        # move objs
+        for parent in parents:
+            parent.child = childB
+        Parent.objects.copy_update(parents, fields=['child'])
+        for obj in Parent.objects.all():
+            self.assertEqual(obj.child, childB)
+
+    def test_django_bug_33322(self):
+        # https://code.djangoproject.com/ticket/33322
+        parent = Parent.objects.create(child=None)
+        parent.child = Child()
+        parent.child.save()
+        Parent.objects.copy_update([parent], fields=['child'])
+        self.assertEqual(parent.child_id, parent.child.pk)
+        self.assertEqual(Parent.objects.get(pk=parent.pk).child_id, parent.child.pk)
+
+
+class TestNonlocalFields(TestCase):
+    def test_local_nonlocal_mixed(self):
+        objs = [MultiSub.objects.create() for _ in range(10)]
+        for i, obj in enumerate(objs):
+            obj.b1 = i
+            obj.b2 = i * 10
+            obj.s1 = i * 100
+            obj.s2 = i * 1000
+        MultiSub.objects.copy_update(objs, ['b1', 'b2', 's1', 's2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().values_list('b1', 'b2', 's1', 's2').order_by('pk')),
+            [(i, i*10, i*100, i*1000) for i in range(10)]
+        )
+    
+    def test_nonlocal_only(self):
+        objs = [MultiSub.objects.create() for _ in range(10)]
+        for i, obj in enumerate(objs):
+            obj.b1 = i
+            obj.b2 = i * 10
+        MultiSub.objects.copy_update(objs, ['b1', 'b2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().values_list('b1', 'b2', 's1', 's2').order_by('pk')),
+            [(i, i*10, None, None) for i in range(10)]
+        )
+
+    def test_local_only(self):
+        objs = [MultiSub.objects.create() for _ in range(10)]
+        for i, obj in enumerate(objs):
+            obj.s1 = i * 100
+            obj.s2 = i * 1000
+        MultiSub.objects.copy_update(objs, ['s1', 's2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().values_list('b1', 'b2', 's1', 's2').order_by('pk')),
+            [(None, None, i*100, i*1000) for i in range(10)]
+        )

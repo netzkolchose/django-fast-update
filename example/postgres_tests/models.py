@@ -42,3 +42,6 @@ class FieldUpdateNotNull(models.Model):
     f_time = models.TimeField(default=time(1, 0, 0))
     f_url = models.URLField(default='')
     f_uuid = models.UUIDField(default=fixed_uuid)
+
+
+class CustomField(models.Field): pass

@@ -11,12 +11,16 @@ from json import dumps
 from uuid import UUID
 
 
-NULL = '\\N'
-BYTE_PLACEHOLDER = '\x00'
-BYTE_PLACEHOLDER_BYTE = b'\x00'
+# TODO: postgres custom field support: arrays (cumbersome), hstore, range fields (easy)
+# TODO: transport encoding not tested yet (can we derived default from psycopg2?)
 
-# TODO: copy encoders and array impl from playground
-# TODO: tons of tests...
+
+# NULL placeholder for COPY FROM
+NULL = '\\N'
+# lazy placeholder: NUL - not allowed in postgres data (cannot slip through)
+LAZY_PLACEHOLDER = '\x00'
+LAZY_PLACEHOLDER_BYTE = b'\x00'
+
 
 def textEscape(v):
     """
@@ -59,15 +63,15 @@ def Binary(v, lazy):
     Test and pass along ``(memoryview, bytes)`` types, raise for any other.
 
     Binary data is transmitted in Postgres' HEX format, thus a single byte
-    creates 2 hex digits in the 
+    creates 2 hex digits in the transport representation.
+
     If bytelength is >4096, the encoding is post-poned to the byte stage
-    to avoid unicode forth and back conversion of hex digits. While this greatly
-    lowers the memory usage and runtime for bigger binary data, it is still 
+    to avoid unicode forth and back conversion of hex digits.
     """
     if isinstance(v, (memoryview, bytes)):
         if len(v) > 4096:
             lazy.append((_lazy_binary, v))
-            return '\\\\x' + BYTE_PLACEHOLDER
+            return '\\\\x' + LAZY_PLACEHOLDER
         return '\\\\x' + v.hex()
     raise TypeError('expected memoryview or bytes type')
 
@@ -79,18 +83,20 @@ def BinaryOrNone(v, lazy):
     if isinstance(v, (memoryview, bytes)):
         if len(v) > 4096:
             lazy.append((_lazy_binary, v))
-            return '\\\\x' + BYTE_PLACEHOLDER
+            return '\\\\x' + LAZY_PLACEHOLDER
         return '\\\\x' + v.hex()
     raise TypeError('expected memoryview, bytes or NoneType')
 
 
 def Boolean(v, lazy):
+    """Test and pass along ``bool``, raise for any other."""
     if isinstance(v, bool):
         return v
     raise TypeError('expected bool type')
 
 
 def BooleanOrNone(v, lazy):
+    """Same as ``Boolean``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, bool):
@@ -99,12 +105,14 @@ def BooleanOrNone(v, lazy):
 
 
 def Date(v, lazy):
+    """Test and pass along ``datetime.date``, raise for any other."""
     if isinstance(v, date):
         return v
     raise TypeError('expected datetime.date type')
 
 
 def DateOrNone(v, lazy):
+    """Same as ``Date``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, date):
@@ -113,12 +121,14 @@ def DateOrNone(v, lazy):
 
 
 def Datetime(v, lazy):
+    """Test and pass along ``datetime``, raise for any other."""
     if isinstance(v, datetime):
         return v
     raise TypeError('expected datetime type')
 
 
 def DatetimeOrNone(v, lazy):
+    """Same as ``Datetime``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, datetime):
@@ -127,12 +137,14 @@ def DatetimeOrNone(v, lazy):
 
 
 def Numeric(v, lazy):
+    """Test and pass along ``Decimal``, raise for any other."""
     if isinstance(v, Decimal):
         return v
     raise TypeError('expected Decimal type')
 
 
 def NumericOrNone(v, lazy):
+    """Same as ``Numeric``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, Decimal):
@@ -141,12 +153,14 @@ def NumericOrNone(v, lazy):
 
 
 def Duration(v, lazy):
+    """Test and pass along ``timedelta``, raise for any other."""
     if isinstance(v, timedelta):
         return v
     raise TypeError('expected timedelta type')
 
 
 def DurationOrNone(v, lazy):
+    """Same as ``Duration``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, timedelta):
@@ -155,12 +169,14 @@ def DurationOrNone(v, lazy):
 
 
 def Float(v, lazy):
+    """Test and pass along ``float`` or ``int``, raise for any other."""
     if isinstance(v, (float, int)):
         return v
     raise TypeError('expected float or int type')
 
 
 def FloatOrNone(v, lazy):
+    """Same as ``Float``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, (float, int)):
@@ -169,10 +185,20 @@ def FloatOrNone(v, lazy):
 
 
 def Json(v, lazy):
+    """
+    Default JSON encoder using ``json.dumps``.
+
+    This version encodes ``None`` as json null value.
+    """
     return textEscape(dumps(v))
 
 
 def JsonOrNone(v, lazy):
+    """
+    Default JSON encoder using ``json.dumps``.
+
+    This version encodes ``None`` as sql null value.
+    """
     if v is None:
         return NULL
     return textEscape(dumps(v))
@@ -200,12 +226,14 @@ def TextOrNone(v, lazy):
 
 
 def Time(v, lazy):
+    """Test and pass along ``datetime.time``, raise for any other."""
     if isinstance(v, dt_time):
         return v
     raise TypeError('expected datetime.time type')
 
 
 def TimeOrNone(v, lazy):
+    """Same as ``Time``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, dt_time):
@@ -214,12 +242,14 @@ def TimeOrNone(v, lazy):
 
 
 def Uuid(v, lazy):
+    """Test and pass along ``UUID``, raise for any other."""
     if isinstance(v, UUID):
         return v
     raise TypeError('expected UUID type')
 
 
 def UuidOrNone(v, lazy):
+    """Same as ``Uuid``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, UUID):
@@ -275,6 +305,8 @@ def register_fieldclass(field_cls, encoder, encoder_none=None):
 
 def get_encoder(field):
     """Get registered encoder for field."""
+    if field.is_relation:
+        return get_encoder(field.target_field)
     for cls in type(field).__mro__:
         enc = ENCODERS.get(cls)
         if enc:
@@ -288,7 +320,7 @@ def write_lazy(f, data, stack):
     idx = 0
     for writer, byte_object in stack:
         old = idx
-        idx = data.index(BYTE_PLACEHOLDER_BYTE, idx)
+        idx = data.index(LAZY_PLACEHOLDER_BYTE, idx)
         f.write(m[old:idx])
         writer(f, byte_object)
         idx += 1
@@ -318,6 +350,7 @@ def copy_from(c, tname, data, columns, get, encs, encoding):
             if lazy:
                 write_lazy(fw, payload, lazy)
                 lazy.clear()
+                payload = bytearray()
             else:
                 length = len(payload)
                 m = memoryview(payload)
@@ -358,7 +391,6 @@ def prepare_create_columns(column_def):
     - types copied from target table
     - no indexes or constraints (no serial, no unique, no primary key etc.)
     """
-    # FIXME: Should we enforce pk NOT NULL?
     return (",".join(f'{k} {v}' for k, v in column_def)
         .replace('bigserial', 'bigint')
         .replace('smallserial', 'smallint')
