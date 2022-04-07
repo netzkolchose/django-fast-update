@@ -5,7 +5,7 @@ if connection.vendor != 'postgresql':
     raise unittest.SkipTest('postgres only tests')
 
 from django.test import TestCase
-from .models import PostgresFields, FieldUpdateNotNull, CustomField
+from .models import PostgresFields, FieldUpdateNotNull, CustomField, FieldUpdateArray
 from exampleapp.models import FieldUpdate, MultiSub, Child, Parent
 from psycopg2.extras import NumericRange, DateTimeTZRange, DateRange
 import datetime
@@ -614,5 +614,246 @@ class TestCopyUpdateRangeFields(TestCase):
         self._single_raise('date_r', DateRange('[[[', 8, '[)'), "expected type <class 'datetime.date'> or None")
 
 
+ARRAY_SINGLES = {
+    'f_biginteger': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [None, 123456789123],
+        [123, -456, 66666666666]
+    ],
+    'f_binary': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [b''],
+        [b'', b'', None],
+        [b'123', b'\x80\x80', memoryview(b'666')],
+    ],
+    'f_boolean': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [True],
+        [None, True, False]
+    ],
+    'f_char': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [''],
+        ['', '', None],
+        [None, '', '\t\n"{\'}]', '{{', '\\N', '\t\n"', '\'', 'ümläütß', '" \\" \\\\"']
+    ],
+    'f_date': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [None, dt.date(), datetime.date(1, 1, 1), datetime.date(9999, 12, 31)]
+    ],
+    'f_datetime': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [
+            None,
+            dt_utc,
+            pytz.timezone('Europe/Berlin').localize(dt),
+            datetime.datetime(1,1,1,1,1,1,1, tzinfo=pytz.UTC),
+            datetime.datetime(9999,12,31,23,59,59,999999, tzinfo=pytz.UTC)
+        ]
+    ],
+    'f_decimal': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [Decimal(0)],
+        [Decimal('2.0'), None],
+        [Decimal('2.0'), Decimal('-22.12345'), Decimal(0), None]
+    ],
+    'f_duration': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [
+            None,
+            datetime.timedelta(days=1),
+            datetime.timedelta(days=2),
+            datetime.timedelta(days=-1),
+            datetime.timedelta(days=-2.5),
+            dt - datetime.datetime(2010,1,1),
+            dt_utc - datetime.datetime(2030,1,1, tzinfo=pytz.UTC),
+            datetime.timedelta(days=-1, hours=-1, minutes=-1, seconds=-1, milliseconds=-1),
+            datetime.timedelta(seconds=2),
+            datetime.timedelta(seconds=-2),
+            datetime.timedelta(hours=24)
+        ]
+    ],
+    'f_email': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [None, '', 'test@example.com', 'test+folder@example.com']
+    ],
+    'f_float': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [None, None, 0.00000000001, 1.23456789, -1.23456789, 1e-05, 1e25],
+        [float('-inf'), None] # FIXME: needs explcit NaN test
+    ],
+    'f_integer': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [None, 123456789],
+        [123, -456, 666666666]
+    ],
+    'f_ip': [
+        None,
+        [],
+        [None],
+        [None, None],
+        ['127.0.0.1', '2001:0db8:85a3:0000:0000:8a2e:0370:7334', '2001:db8::1', None]
+    ],
+    'f_json': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [{
+            'a': None,
+            'b"': '\tcomplicated "with quotes"',
+            'c': '\\N\n\\n{',
+            '': 'empty key',
+            'different quotes': '" \\" \\\\"',
+            '€': 'ümläütß'
+        }, None, 'plain string', (1,2,3)]    # NOTE: list type is reserved for array descent
+    ],
+    'f_slug': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [None, '', 'some random text with ümläutß']
+    ],
+    'f_smallinteger': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [None, 0, 1, -1, 123, -123]
+    ],
+    'f_text': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [None, '', 'hello', 'ümläütß€', '1\t2\n3\\n', '" \\" \\\\"', '\\N\n\\n{'],
+        [None, '', '\\N', '"{', '{hel,lo}', 'a\\b\'c', '\t', '\n', 'mo,u{s"e']
+    ],
+    'f_time': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [
+            None,
+            dt.time(),
+            dt_utc.time(),
+            datetime.time(hour=0, minute=0, second=0),
+            datetime.time(hour=23, minute=59, second=59)
+        ]
+    ],
+    'f_url': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [None, '', 'http://example.com', 'https://!$%25:)(*&^@www.example.com/blog/urls.html?abc=123#what-else']
+    ],
+    'f_uuid': [
+        None,
+        [],
+        [None],
+        [None, None],
+        [None, random_uuid, random_uuid]
+    ],
+    # TODO: 2d tests
+    'f_biginteger2': [],
+    'f_binary2': [],
+    'f_boolean2': [],
+    'f_char2': [],
+    'f_date2': [],
+    'f_datetime2': [],
+    'f_decimal2': [],
+    'f_duration2': [],
+    'f_email2': [],
+    'f_float2': [],
+    'f_integer2': [],
+    'f_ip2': [],
+    'f_json2': [],
+    'f_slug2': [],
+    'f_smallinteger2': [],
+    'f_text2': [],
+    'f_time2': [],
+    'f_url2': [],
+    'f_uuid2': [],
+}
 
 
+class TestCopyUpdateArray(TestCase):
+    def test_singles(self):
+        for fieldname, values in ARRAY_SINGLES.items():
+            for value in values:
+                FieldUpdateArray.objects.all().delete()
+                a = FieldUpdateArray.objects.create()
+                b = FieldUpdateArray.objects.create()
+                update_a = FieldUpdateArray(pk=a.pk, **{fieldname: value})
+                update_b = FieldUpdateArray(pk=b.pk, **{fieldname: value})
+                FieldUpdateArray.objects.bulk_update([update_a], [fieldname])
+                FieldUpdateArray.objects.copy_update([update_b], [fieldname])
+                res_a, res_b = FieldUpdateArray.objects.all().values(fieldname)
+                self.assertEqual(res_b[fieldname], res_a[fieldname])
+
+
+
+class TestCopyUpdateWickedText(TestCase):
+    def test_plain_bytes(self):
+        # skip \x00 as it is not allowed in postgres
+        values = ''.join(chr(i) for i in range(1, 256))
+        obj = FieldUpdate.objects.create()
+        # full write
+        obj.f_text = values
+        FieldUpdate.objects.copy_update([obj], ['f_text'])
+        self.assertEqual(FieldUpdate.objects.get(pk=obj.pk).f_text, values)
+        # single writes
+        for v in values:
+            obj.f_text = v
+            FieldUpdate.objects.copy_update([obj], ['f_text'])
+            self.assertEqual(FieldUpdate.objects.get(pk=obj.pk).f_text, v)
+        # array write
+        obj_ar = FieldUpdateArray.objects.create()
+        obj_ar.f_text = list(values)
+        FieldUpdateArray.objects.copy_update([obj_ar], ['f_text'])
+        self.assertEqual(FieldUpdateArray.objects.get(pk=obj_ar.pk).f_text, list(values))
+        # array write block
+        obj_ar.f_text = [values, values]
+        FieldUpdateArray.objects.copy_update([obj_ar], ['f_text'])
+        self.assertEqual(FieldUpdateArray.objects.get(pk=obj_ar.pk).f_text, [values, values])
+
+
+    def test_blns(self):
+        # TODO...
+        pass

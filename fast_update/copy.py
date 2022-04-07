@@ -88,6 +88,7 @@ def Int(v, lazy):
     if isinstance(v, int):
         return v
     raise TypeError(f'expected type {int}')
+Int.array_escape = False
 
 
 def IntOrNone(v, lazy):
@@ -97,6 +98,7 @@ def IntOrNone(v, lazy):
     if isinstance(v, int):
         return v
     raise TypeError(f'expected type {int} or None')
+IntOrNone.array_escape = False
 
 
 def _lazy_binary(f, v):
@@ -126,6 +128,7 @@ def Binary(v, lazy):
             return '\\\\x' + LAZY_PLACEHOLDER
         return '\\\\x' + v.hex()
     raise TypeError(f'expected types {memoryview} or {bytes}')
+Binary.array_escape = True
 
 
 def BinaryOrNone(v, lazy):
@@ -138,6 +141,7 @@ def BinaryOrNone(v, lazy):
             return '\\\\x' + LAZY_PLACEHOLDER
         return '\\\\x' + v.hex()
     raise TypeError(f'expected types {memoryview}, {bytes} or None')
+BinaryOrNone.array_escape = True
 
 
 def Boolean(v, lazy):
@@ -145,6 +149,7 @@ def Boolean(v, lazy):
     if isinstance(v, bool):
         return v
     raise TypeError(f'expected type {bool}')
+Boolean.array_escape = False
 
 
 def BooleanOrNone(v, lazy):
@@ -154,6 +159,7 @@ def BooleanOrNone(v, lazy):
     if isinstance(v, bool):
         return v
     raise TypeError(f'expected type {bool} or None')
+BooleanOrNone.array_escape = False
 
 
 def Date(v, lazy):
@@ -161,6 +167,7 @@ def Date(v, lazy):
     if isinstance(v, date):
         return v
     raise TypeError(f'expected type {date}')
+Date.array_escape = False
 
 
 def DateOrNone(v, lazy):
@@ -170,6 +177,7 @@ def DateOrNone(v, lazy):
     if isinstance(v, date):
         return v
     raise TypeError(f'expected type {date} or None')
+DateOrNone.array_escape = False
 
 
 def Datetime(v, lazy):
@@ -177,6 +185,7 @@ def Datetime(v, lazy):
     if isinstance(v, datetime):
         return v
     raise TypeError(f'expected type {datetime}')
+Datetime.array_escape = True
 
 
 def DatetimeOrNone(v, lazy):
@@ -186,6 +195,7 @@ def DatetimeOrNone(v, lazy):
     if isinstance(v, datetime):
         return v
     raise TypeError(f'expected type {datetime} or None')
+DatetimeOrNone.array_escape = True
 
 
 def Numeric(v, lazy):
@@ -193,6 +203,7 @@ def Numeric(v, lazy):
     if isinstance(v, Decimal):
         return v
     raise TypeError(f'expected type {Decimal}')
+Numeric.array_escape = False
 
 
 def NumericOrNone(v, lazy):
@@ -202,6 +213,7 @@ def NumericOrNone(v, lazy):
     if isinstance(v, Decimal):
         return v
     raise TypeError(f'expected type {Decimal} or None')
+NumericOrNone.array_escape = False
 
 
 def Duration(v, lazy):
@@ -209,6 +221,7 @@ def Duration(v, lazy):
     if isinstance(v, timedelta):
         return v
     raise TypeError(f'expected type {timedelta}')
+Duration.array_escape = True
 
 
 def DurationOrNone(v, lazy):
@@ -218,6 +231,7 @@ def DurationOrNone(v, lazy):
     if isinstance(v, timedelta):
         return v
     raise TypeError(f'expected type {timedelta} or None')
+DurationOrNone.array_escape = True
 
 
 def Float(v, lazy):
@@ -225,6 +239,7 @@ def Float(v, lazy):
     if isinstance(v, (float, int)):
         return v
     raise TypeError(f'expected types {float} or {int}')
+Float.array_escape = False
 
 
 def FloatOrNone(v, lazy):
@@ -234,6 +249,7 @@ def FloatOrNone(v, lazy):
     if isinstance(v, (float, int)):
         return v
     raise TypeError(f'expected types {float}, {int} or None')
+FloatOrNone.array_escape = False
 
 
 def Json(v, lazy):
@@ -243,6 +259,7 @@ def Json(v, lazy):
     This version encodes ``None`` as json null value.
     """
     return text_escape(dumps(v))
+Json.array_escape = True
 
 
 def JsonOrNone(v, lazy):
@@ -254,6 +271,7 @@ def JsonOrNone(v, lazy):
     if v is None:
         return NULL
     return text_escape(dumps(v))
+JsonOrNone.array_escape = True
 
 
 def Text(v, lazy):
@@ -266,6 +284,7 @@ def Text(v, lazy):
     if isinstance(v, str):
         return text_escape(v)
     raise TypeError(f'expected type {str}')
+Text.array_escape = True
 
 
 def TextOrNone(v, lazy):
@@ -275,6 +294,7 @@ def TextOrNone(v, lazy):
     if isinstance(v, str):
         return text_escape(v)
     raise TypeError(f'expected type {str} or None')
+TextOrNone.array_escape = True
 
 
 def Time(v, lazy):
@@ -282,6 +302,7 @@ def Time(v, lazy):
     if isinstance(v, dt_time):
         return v
     raise TypeError(f'expected type {dt_time}')
+Time.array_escape = False
 
 
 def TimeOrNone(v, lazy):
@@ -291,6 +312,7 @@ def TimeOrNone(v, lazy):
     if isinstance(v, dt_time):
         return v
     raise TypeError(f'expected type {dt_time} or None')
+TimeOrNone.array_escape = False
 
 
 def Uuid(v, lazy):
@@ -298,6 +320,7 @@ def Uuid(v, lazy):
     if isinstance(v, UUID):
         return v
     raise TypeError(f'expected type {UUID}')
+Uuid.array_escape = False
 
 
 def UuidOrNone(v, lazy):
@@ -307,6 +330,7 @@ def UuidOrNone(v, lazy):
     if isinstance(v, UUID):
         return v
     raise TypeError(f'expected type {UUID} or None')
+UuidOrNone.array_escape = False
 
 
 """
@@ -325,6 +349,7 @@ Rules for nested types:
 """
 def quote(v):
     return '"' + v.replace('"', '\\\\"') + '"'
+
 def text_escape_nested(v):
     """
     Escape nested str-like data for postgres' TEXT format.
@@ -334,7 +359,11 @@ def text_escape_nested(v):
     return (v.replace('\\', '\\\\\\\\')
         .replace('\b', '\\b').replace('\f', '\\f').replace('\n', '\\n')
         .replace('\r', '\\r').replace('\t', '\\t').replace('\v', '\\v'))
+
 SQL_NULL = 'NULL'
+
+def array_escape(v):
+    return '"' + v.replace('\\\\', '\\\\\\\\').replace('"', '\\\\"') + '"'
 
 
 def HStore(v, lazy):
@@ -358,6 +387,7 @@ def HStore(v, lazy):
             )
         return ','.join(parts)
     raise TypeError(f'expected type {dict}')
+HStore.array_escape = True
 
 
 def HStoreOrNone(v, lazy):
@@ -367,6 +397,7 @@ def HStoreOrNone(v, lazy):
     if isinstance(v, dict):
         return HStore(v, lazy)
     raise TypeError(f'expected type {dict} or None')
+HStoreOrNone.array_escape = True
 
 
 def range_factory(_type):
@@ -374,13 +405,33 @@ def range_factory(_type):
         if isinstance(v, Range) and all(map(lambda e: isinstance(e, _type), (v.lower, v.upper))):
             return v
         raise TypeError(f'expected type {_type}')
+    wrap.array_escape = True
     def wrap_none(v, lazy):
         if v is None:
             return NULL
         if isinstance(v, Range) and all(map(lambda e: isinstance(e, _type), (v.lower, v.upper))):
             return v
         raise TypeError(f'expected type {_type} or None')
+    wrap_none.array_escape = True
     return wrap, wrap_none
+
+
+# TODO: cache encoder for later calls?
+# NOTE: array descent only happens on lists (to allow tuples as json native)
+# FIXME: should we respect null field setting in dim descent?
+def array_factory(field):
+    base = field.base_field
+    while isinstance(base, ArrayField):
+        base = base.base_field
+    enc = get_encoder(base)
+    def wrap(v, lazy, dim=0):
+        if v is None:
+            return SQL_NULL if dim else NULL
+        if isinstance(v, (list,)):
+            return f'{{{",".join(wrap(value, lazy, dim+1) for value in v)}}}'
+        final = str(enc(v, lazy))
+        return array_escape(final) if enc.array_escape else final
+    return wrap
 
 
 ENCODERS = {
@@ -419,7 +470,7 @@ ENCODERS = {
     DecimalRangeField: range_factory(Decimal),
     DateTimeRangeField: range_factory(datetime),
     DateRangeField: range_factory(date),
-    #ArrayField
+    # ArrayField: handled by array_factory(field) in get_encoder
 }
 
 
@@ -440,6 +491,8 @@ def get_encoder(field):
     """Get registered encoder for field."""
     if field.is_relation:
         return get_encoder(field.target_field)
+    if isinstance(field, ArrayField):
+        return array_factory(field)
     for cls in type(field).__mro__:
         enc = ENCODERS.get(cls)
         if enc:
