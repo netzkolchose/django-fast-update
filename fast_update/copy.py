@@ -9,6 +9,7 @@ from decimal import Decimal as Decimal
 from datetime import date, datetime, timedelta, time as dt_time
 from json import dumps
 from uuid import UUID
+from django.contrib.postgres.fields import HStoreField
 
 
 # TODO: postgres custom field support: arrays (cumbersome), hstore, range fields (easy)
@@ -70,7 +71,7 @@ LAZY_PLACEHOLDER = '\x00'
 LAZY_PLACEHOLDER_BYTE = b'\x00'
 
 
-def textEscape(v):
+def text_escape(v):
     """
     Escape str-like data for postgres' TEXT format.
     """
@@ -238,7 +239,7 @@ def Json(v, lazy):
 
     This version encodes ``None`` as json null value.
     """
-    return textEscape(dumps(v))
+    return text_escape(dumps(v))
 
 
 def JsonOrNone(v, lazy):
@@ -249,7 +250,7 @@ def JsonOrNone(v, lazy):
     """
     if v is None:
         return NULL
-    return textEscape(dumps(v))
+    return text_escape(dumps(v))
 
 
 def Text(v, lazy):
@@ -260,7 +261,7 @@ def Text(v, lazy):
     for the TEXT format of COPY FROM.
     """
     if isinstance(v, str):
-        return textEscape(v)
+        return text_escape(v)
     raise TypeError('expected str type')
 
 
@@ -269,7 +270,7 @@ def TextOrNone(v, lazy):
     if v is None:
         return NULL
     if isinstance(v, str):
-        return textEscape(v)
+        return text_escape(v)
     raise TypeError('expected str or NoneType')
 
 
@@ -305,6 +306,66 @@ def UuidOrNone(v, lazy):
     raise TypeError('expected UUID or NoneType')
 
 
+"""
+Special handling of nested types
+
+Nested types behave way different in COPY FROM TEXT format,
+than on top level (kinda falling back on SQL syntax format).
+From the tests this applies to values in arrays and hstore
+(prolly applies to all custom composite types, not tested).
+
+Rules for nested types:
+- a backslash in nested strings needs 4x escaping, e.g. \ --> \\\\
+- nested str values may need explicit quoting --> always quoted
+- due to quoting, " needs \\" escape in nested strings
+- null value is again sql NULL
+"""
+def quote(v):
+    return '"' + v.replace('"', '\\\\"') + '"'
+def text_escape_nested(v):
+    """
+    Escape nested str-like data for postgres' TEXT format.
+    The nested variant is needed for array and hstore data
+    (prolly for any custom composite types, untested).
+    """
+    return (v.replace('\\', '\\\\\\\\')
+        .replace('\b', '\\b').replace('\f', '\\f').replace('\n', '\\n')
+        .replace('\r', '\\r').replace('\t', '\\t').replace('\v', '\\v'))
+SQL_NULL = 'NULL'
+
+
+def HStore(v, lazy):
+    """
+    HStore field encoder. Expects a ``dict`` as input type
+    with str keys and str|None values. Any other types will raise.
+
+    The generated TEXT format representation is always quoted
+    in the form: ``"key"=>"value with \\"double quotes\\""``.
+    """
+    if isinstance(v, dict):
+        parts = []
+        for k, v in v.items():
+            if not isinstance(k, str):
+                raise TypeError('expected str type for keys')
+            if v is not None and not isinstance(v, str):
+                raise TypeError('expected str or NoneType for values')
+            parts.append(
+                f'{quote(text_escape_nested(k))}=>'
+                f'{SQL_NULL if v is None else quote(text_escape_nested(v))}'
+            )
+        return ','.join(parts)
+    raise TypeError('expected dict type')
+
+
+def HStoreOrNone(v, lazy):
+    """Same as ``Hstore``, additionally handling ``None`` as NULL."""
+    if v is None:
+        return NULL
+    if isinstance(v, dict):
+        return HStore(v, lazy)
+    raise TypeError('expected dict or NoneType')
+
+
 ENCODERS = {
     models.AutoField: (Int, IntOrNone),
     models.BigAutoField: (Int, IntOrNone),
@@ -334,6 +395,8 @@ ENCODERS = {
     models.TimeField: (Time, TimeOrNone),
     models.URLField: (Text, TextOrNone),
     models.UUIDField: (Uuid, UuidOrNone),
+    # postgres specific fields
+    HStoreField: (HStore, HStoreOrNone),
     #ArrayField, HStore, Range ...
 }
 

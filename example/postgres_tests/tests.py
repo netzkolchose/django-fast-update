@@ -137,10 +137,10 @@ CU_SINGLES = {
     'f_float': [None, None, 0.00000000001, 1.23456789, -1.23456789, 1e-05, 1e25, float('inf'), float('-inf')],
     'f_integer': [None, 0, 1, -1, 123, -123],
     'f_ip': ['127.0.0.1', '2001:0db8:85a3:0000:0000:8a2e:0370:7334', '2001:db8::1'],
-    'f_json': [None, {}, [], [1, None, 3], {'a': None}, {'a': 123.45, 'b': 'umläütß€'}],
+    'f_json': [None, {}, [], [1, None, 3], {'a': None}, {'a': 123.45, 'b': 'umläütß€', 'c': '\\N\n{'}],
     'f_slug': [None, '', 'some random text with ümläutß'],
     'f_smallinteger': [None, 0, 1, -1, 123, -123],
-    'f_text': [None, '', 'hello', 'ümläütß€', '1\t2\n3\\n'],
+    'f_text': [None, '', 'hello', 'ümläütß€', '1\t2\n3\\n', '\\N\'\n{"'],
     'f_time': [
         None,
         dt.time(),
@@ -513,4 +513,65 @@ class TestNonlocalFields(TestCase):
         self.assertEqual(
             list(MultiSub.objects.all().values_list('b1', 'b2', 's1', 's2').order_by('pk')),
             [(None, None, i*100, i*1000) for i in range(10)]
+        )
+
+
+class TestCopyUpdateHStore(TestCase):
+    def test_hstore(self):
+        # test hstore explicit for likely to clash values
+        value = {
+            'a': None,
+            'b"': '\tcomplicated "with quotes"',
+            'c': '\\N\n\\n{',
+            '': 'empty key',
+            'different quotes': '" \\" \\\\"',
+            '€': 'ümläütß'
+        }
+        obj1 = PostgresFields.objects.create()
+        obj1.hstore = value
+        PostgresFields.objects.bulk_update([obj1], ['hstore'])
+        obj2 = PostgresFields.objects.create()
+        obj2.hstore = value
+        PostgresFields.objects.copy_update([obj2], ['hstore'])
+        self.assertEqual(
+            PostgresFields.objects.get(pk=obj1.pk).hstore,
+            value
+        )
+        self.assertEqual(
+            PostgresFields.objects.get(pk=obj2.pk).hstore,
+            PostgresFields.objects.get(pk=obj1.pk).hstore
+        )
+        # top level null
+        obj2.hstore = None
+        PostgresFields.objects.copy_update([obj2], ['hstore'])
+        self.assertEqual(
+            PostgresFields.objects.get(pk=obj2.pk).hstore,
+            None
+        )
+
+    def test_hstore_wrongtype(self):
+        obj = PostgresFields.objects.create()
+        obj.hstore = 123
+        self.assertRaisesMessage(
+            TypeError,
+            'expected dict or NoneType',
+            lambda : PostgresFields.objects.copy_update([obj], ['hstore'])
+        )
+
+    def test_hstore_wrongkeytype(self):
+        obj = PostgresFields.objects.create()
+        obj.hstore = {123: 'nothing'}
+        self.assertRaisesMessage(
+            TypeError,
+            'expected str type for keys',
+            lambda : PostgresFields.objects.copy_update([obj], ['hstore'])
+        )
+
+    def test_hstore_wrongvaluetype(self):
+        obj = PostgresFields.objects.create()
+        obj.hstore = {'wrong': 123}
+        self.assertRaisesMessage(
+            TypeError,
+            'expected str or NoneType for values',
+            lambda : PostgresFields.objects.copy_update([obj], ['hstore'])
         )
