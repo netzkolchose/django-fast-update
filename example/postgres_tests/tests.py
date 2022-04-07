@@ -1,3 +1,9 @@
+from django.db import connection
+
+import unittest
+if connection.vendor != 'postgresql':
+    raise unittest.SkipTest('postgres only tests')
+
 from django.test import TestCase
 from .models import PostgresFields, FieldUpdateNotNull, CustomField
 from exampleapp.models import FieldUpdate, MultiSub, Child, Parent
@@ -305,6 +311,7 @@ class TestCopyUpdate(TestCase):
         FieldUpdate.objects.copy_update([obj1, obj2], ['f_binary', 'f_text'])
         self.assertEqual(FieldUpdate.objects.get(pk=obj1.pk).f_text, 'x' * 70000)
         self.assertEqual(FieldUpdate.objects.get(pk=obj2.pk).f_binary.tobytes(), b'0' * 100000)
+
 
 class TestCopyUpdateNotNull(TestCase):
     def _single(self, fieldname):

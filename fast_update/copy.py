@@ -12,7 +12,55 @@ from uuid import UUID
 
 
 # TODO: postgres custom field support: arrays (cumbersome), hstore, range fields (easy)
-# TODO: transport encoding not tested yet (can we derived default from psycopg2?)
+
+
+# postgres connection encodings mapped to python
+# taken from https://www.postgresql.org/docs/current/multibyte.html
+# python counterparts shamelessly taken from psycopg3 :)
+CONNECTION_ENCODINGS = {
+    'BIG5': 'big5',
+    'EUC_CN': 'gb2312',
+    'EUC_JP': 'euc_jp',
+    'EUC_JIS_2004': 'euc_jis_2004',
+    'EUC_KR': 'euc_kr',
+    #'EUC_TW': not supported
+    'GB18030': 'gb18030',
+    'GBK': 'gbk',
+    'ISO_8859_5': 'iso8859-5',
+    'ISO_8859_6': 'iso8859-6',
+    'ISO_8859_7': 'iso8859-7',
+    'ISO_8859_8': 'iso8859-8',
+    'JOHAB': 'johab',
+    'KOI8R': 'koi8-r',
+    'KOI8U': 'koi8-u',
+    'LATIN1': 'iso8859-1',
+    'LATIN2': 'iso8859-2',
+    'LATIN3': 'iso8859-3',
+    'LATIN4': 'iso8859-4',
+    'LATIN5': 'iso8859-9',
+    'LATIN6': 'iso8859-10',
+    'LATIN7': 'iso8859-13',
+    'LATIN8': 'iso8859-14',
+    'LATIN9': 'iso8859-15',
+    'LATIN10': 'iso8859-16',
+    #'MULE_INTERNAL': not supported
+    'SJIS': 'shift_jis',
+    'SHIFT_JIS_2004': 'shift_jis_2004',
+    'SQL_ASCII': 'ascii',
+    'UHC': 'cp949',
+    'UTF8': 'utf-8',
+    'WIN866': 'cp866',
+    'WIN874': 'cp874',
+    'WIN1250': 'cp1250',
+    'WIN1251': 'cp1251',
+    'WIN1252': 'cp1252',
+    'WIN1253': 'cp1253',
+    'WIN1254': 'cp1254',
+    'WIN1255': 'cp1255',
+    'WIN1256': 'cp1256',
+    'WIN1257': 'cp1257',
+    'WIN1258': 'cp1258',
+}
 
 
 # NULL placeholder for COPY FROM
@@ -385,7 +433,7 @@ def copy_from(c, tname, data, columns, get, encs, encoding):
         f.close()
 
 
-def prepare_create_columns(column_def):
+def create_columns(column_def):
     """
     Prepare columns for table create as follows:
     - types copied from target table
@@ -408,8 +456,8 @@ def copy_update(
     qs: models.QuerySet,
     objs: Sequence[models.Model],
     fieldnames: Sequence[str],
-    transport_encoding: Optional[str] = 'utf-8',
-    field_encoders: Optional[Dict[str, Any]] = None
+    field_encoders: Optional[Dict[str, Any]] = None,
+    encoding: Optional[str] = None
 ) -> int:
     qs._for_write = True
     conn = connections[qs.db]
@@ -442,8 +490,9 @@ def copy_update(
     with transaction.atomic(using=conn.alias, savepoint=False), conn.cursor() as c:
         temp = f'temp_cu_{model._meta.db_table}'
         c.execute(f'DROP TABLE IF EXISTS "{temp}"')
-        c.execute(f'CREATE TEMPORARY TABLE "{temp}" ({prepare_create_columns(column_def)})')
-        copy_from(c, temp, objs, colnames, get, encs, transport_encoding)
+        c.execute(f'CREATE TEMPORARY TABLE "{temp}" ({create_columns(column_def)})')
+        copy_from(c, temp, objs, colnames, get, encs,
+            encoding or CONNECTION_ENCODINGS[c.connection.encoding])
         c.execute(f'ANALYZE "{temp}" ({pk_field.column})')
         c.execute(update_sql(model._meta.db_table, temp, pk_field.column, fields))
         rows_updated = c.rowcount
