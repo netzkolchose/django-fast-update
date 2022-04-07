@@ -9,10 +9,13 @@ from decimal import Decimal as Decimal
 from datetime import date, datetime, timedelta, time as dt_time
 from json import dumps
 from uuid import UUID
-from django.contrib.postgres.fields import HStoreField
+from django.contrib.postgres.fields import (HStoreField, ArrayField, IntegerRangeField,
+    BigIntegerRangeField, DecimalRangeField, DateTimeRangeField, DateRangeField)
+from psycopg2.extras import Range
 
 
-# TODO: postgres custom field support: arrays (cumbersome), hstore, range fields (easy)
+# TODO: postgres custom field support: arrays (cumbersome)
+# TODO: import guard in query.py
 
 
 # postgres connection encodings mapped to python
@@ -84,7 +87,7 @@ def Int(v, lazy):
     """Test and pass along ``int``, raise for any other."""
     if isinstance(v, int):
         return v
-    raise TypeError('expected int type')
+    raise TypeError(f'expected type {int}')
 
 
 def IntOrNone(v, lazy):
@@ -93,7 +96,7 @@ def IntOrNone(v, lazy):
         return NULL
     if isinstance(v, int):
         return v
-    raise TypeError('expected int or NoneType')
+    raise TypeError(f'expected type {int} or None')
 
 
 def _lazy_binary(f, v):
@@ -122,7 +125,7 @@ def Binary(v, lazy):
             lazy.append((_lazy_binary, v))
             return '\\\\x' + LAZY_PLACEHOLDER
         return '\\\\x' + v.hex()
-    raise TypeError('expected memoryview or bytes type')
+    raise TypeError(f'expected types {memoryview} or {bytes}')
 
 
 def BinaryOrNone(v, lazy):
@@ -134,14 +137,14 @@ def BinaryOrNone(v, lazy):
             lazy.append((_lazy_binary, v))
             return '\\\\x' + LAZY_PLACEHOLDER
         return '\\\\x' + v.hex()
-    raise TypeError('expected memoryview, bytes or NoneType')
+    raise TypeError(f'expected types {memoryview}, {bytes} or None')
 
 
 def Boolean(v, lazy):
     """Test and pass along ``bool``, raise for any other."""
     if isinstance(v, bool):
         return v
-    raise TypeError('expected bool type')
+    raise TypeError(f'expected type {bool}')
 
 
 def BooleanOrNone(v, lazy):
@@ -150,14 +153,14 @@ def BooleanOrNone(v, lazy):
         return NULL
     if isinstance(v, bool):
         return v
-    raise TypeError('expected bool or NoneType')
+    raise TypeError(f'expected type {bool} or None')
 
 
 def Date(v, lazy):
     """Test and pass along ``datetime.date``, raise for any other."""
     if isinstance(v, date):
         return v
-    raise TypeError('expected datetime.date type')
+    raise TypeError(f'expected type {date}')
 
 
 def DateOrNone(v, lazy):
@@ -166,14 +169,14 @@ def DateOrNone(v, lazy):
         return NULL
     if isinstance(v, date):
         return v
-    raise TypeError('expected datetime.date or NoneType')
+    raise TypeError(f'expected type {date} or None')
 
 
 def Datetime(v, lazy):
     """Test and pass along ``datetime``, raise for any other."""
     if isinstance(v, datetime):
         return v
-    raise TypeError('expected datetime type')
+    raise TypeError(f'expected type {datetime}')
 
 
 def DatetimeOrNone(v, lazy):
@@ -182,14 +185,14 @@ def DatetimeOrNone(v, lazy):
         return NULL
     if isinstance(v, datetime):
         return v
-    raise TypeError('expected datetime or NoneType')
+    raise TypeError(f'expected type {datetime} or None')
 
 
 def Numeric(v, lazy):
     """Test and pass along ``Decimal``, raise for any other."""
     if isinstance(v, Decimal):
         return v
-    raise TypeError('expected Decimal type')
+    raise TypeError(f'expected type {Decimal}')
 
 
 def NumericOrNone(v, lazy):
@@ -198,14 +201,14 @@ def NumericOrNone(v, lazy):
         return NULL
     if isinstance(v, Decimal):
         return v
-    raise TypeError('expected Decimal or NoneType')
+    raise TypeError(f'expected type {Decimal} or None')
 
 
 def Duration(v, lazy):
     """Test and pass along ``timedelta``, raise for any other."""
     if isinstance(v, timedelta):
         return v
-    raise TypeError('expected timedelta type')
+    raise TypeError(f'expected type {timedelta}')
 
 
 def DurationOrNone(v, lazy):
@@ -214,14 +217,14 @@ def DurationOrNone(v, lazy):
         return NULL
     if isinstance(v, timedelta):
         return v
-    raise TypeError('expected timedelta or NoneType')
+    raise TypeError(f'expected type {timedelta} or None')
 
 
 def Float(v, lazy):
     """Test and pass along ``float`` or ``int``, raise for any other."""
     if isinstance(v, (float, int)):
         return v
-    raise TypeError('expected float or int type')
+    raise TypeError(f'expected types {float} or {int}')
 
 
 def FloatOrNone(v, lazy):
@@ -230,7 +233,7 @@ def FloatOrNone(v, lazy):
         return NULL
     if isinstance(v, (float, int)):
         return v
-    raise TypeError('expected float, int or NoneType')
+    raise TypeError(f'expected types {float}, {int} or None')
 
 
 def Json(v, lazy):
@@ -262,7 +265,7 @@ def Text(v, lazy):
     """
     if isinstance(v, str):
         return text_escape(v)
-    raise TypeError('expected str type')
+    raise TypeError(f'expected type {str}')
 
 
 def TextOrNone(v, lazy):
@@ -271,14 +274,14 @@ def TextOrNone(v, lazy):
         return NULL
     if isinstance(v, str):
         return text_escape(v)
-    raise TypeError('expected str or NoneType')
+    raise TypeError(f'expected type {str} or None')
 
 
 def Time(v, lazy):
     """Test and pass along ``datetime.time``, raise for any other."""
     if isinstance(v, dt_time):
         return v
-    raise TypeError('expected datetime.time type')
+    raise TypeError(f'expected type {dt_time}')
 
 
 def TimeOrNone(v, lazy):
@@ -287,14 +290,14 @@ def TimeOrNone(v, lazy):
         return NULL
     if isinstance(v, dt_time):
         return v
-    raise TypeError('expected datetime.time or NoneType')
+    raise TypeError(f'expected type {dt_time} or None')
 
 
 def Uuid(v, lazy):
     """Test and pass along ``UUID``, raise for any other."""
     if isinstance(v, UUID):
         return v
-    raise TypeError('expected UUID type')
+    raise TypeError(f'expected type {UUID}')
 
 
 def UuidOrNone(v, lazy):
@@ -303,7 +306,7 @@ def UuidOrNone(v, lazy):
         return NULL
     if isinstance(v, UUID):
         return v
-    raise TypeError('expected UUID or NoneType')
+    raise TypeError(f'expected type {UUID} or None')
 
 
 """
@@ -346,15 +349,15 @@ def HStore(v, lazy):
         parts = []
         for k, v in v.items():
             if not isinstance(k, str):
-                raise TypeError('expected str type for keys')
+                raise TypeError(f'expected type {str} for keys')
             if v is not None and not isinstance(v, str):
-                raise TypeError('expected str or NoneType for values')
+                raise TypeError(f'expected type {str} or None for values')
             parts.append(
                 f'{quote(text_escape_nested(k))}=>'
                 f'{SQL_NULL if v is None else quote(text_escape_nested(v))}'
             )
         return ','.join(parts)
-    raise TypeError('expected dict type')
+    raise TypeError(f'expected type {dict}')
 
 
 def HStoreOrNone(v, lazy):
@@ -363,7 +366,21 @@ def HStoreOrNone(v, lazy):
         return NULL
     if isinstance(v, dict):
         return HStore(v, lazy)
-    raise TypeError('expected dict or NoneType')
+    raise TypeError(f'expected type {dict} or None')
+
+
+def range_factory(_type):
+    def wrap(v, lazy):
+        if isinstance(v, Range) and all(map(lambda e: isinstance(e, _type), (v.lower, v.upper))):
+            return v
+        raise TypeError(f'expected type {_type}')
+    def wrap_none(v, lazy):
+        if v is None:
+            return NULL
+        if isinstance(v, Range) and all(map(lambda e: isinstance(e, _type), (v.lower, v.upper))):
+            return v
+        raise TypeError(f'expected type {_type} or None')
+    return wrap, wrap_none
 
 
 ENCODERS = {
@@ -397,7 +414,12 @@ ENCODERS = {
     models.UUIDField: (Uuid, UuidOrNone),
     # postgres specific fields
     HStoreField: (HStore, HStoreOrNone),
-    #ArrayField, HStore, Range ...
+    IntegerRangeField: range_factory(int),
+    BigIntegerRangeField: range_factory(int),
+    DecimalRangeField: range_factory(Decimal),
+    DateTimeRangeField: range_factory(datetime),
+    DateRangeField: range_factory(date),
+    #ArrayField
 }
 
 

@@ -195,12 +195,12 @@ class TestCopyUpdate(TestCase):
 
     def test_biginteger(self):
         self._single('f_biginteger')
-        self._single_raise('f_biginteger', 'wrong', 'expected int or NoneType')
+        self._single_raise('f_biginteger', 'wrong', "expected type <class 'int'> or None")
 
 
     def test_binary(self):
         self._single('f_binary')
-        self._single_raise('f_binary', 'wrong', 'expected memoryview, bytes or NoneType')
+        self._single_raise('f_binary', 'wrong', "expected types <class 'memoryview'>, <class 'bytes'> or None")
     
     def test_binary_big(self):
         # >64k
@@ -218,62 +218,62 @@ class TestCopyUpdate(TestCase):
 
     def test_boolean(self):
         self._single('f_boolean')
-        self._single_raise('f_boolean', 'wrong', 'expected bool or NoneType')
+        self._single_raise('f_boolean', 'wrong', "expected type <class 'bool'> or None")
     
     def test_char(self):
         self._single('f_char')
-        self._single_raise('f_char', 123, 'expected str or NoneType')
+        self._single_raise('f_char', 123, "expected type <class 'str'> or None")
 
     def test_date(self):
         self._single('f_date')
-        self._single_raise('f_date', 'wrong', 'expected datetime.date or NoneType')
+        self._single_raise('f_date', 'wrong', "expected type <class 'datetime.date'> or None")
 
     def test_datetime(self):
         self._single('f_datetime')
-        self._single_raise('f_datetime', 'wrong', 'expected datetime or NoneType')
+        self._single_raise('f_datetime', 'wrong', "expected type <class 'datetime.datetime'> or None")
 
     def test_decimal(self):
         self._single('f_decimal')
-        self._single_raise('f_decimal', 'wrong', 'expected Decimal or NoneType')
+        self._single_raise('f_decimal', 'wrong', "expected type <class 'decimal.Decimal'> or None")
 
     def test_duration(self):
         self._single('f_duration')
-        self._single_raise('f_duration', 'wrong', 'expected timedelta or NoneType')
+        self._single_raise('f_duration', 'wrong', "expected type <class 'datetime.timedelta'> or None")
 
     def test_email(self):
         self._single('f_email')
-        self._single_raise('f_email', 123, 'expected str or NoneType')
+        self._single_raise('f_email', 123, "expected type <class 'str'> or None")
 
     def test_float(self):
         self._single('f_float')
-        self._single_raise('f_float', 'wrong', 'expected float, int or NoneType')
+        self._single_raise('f_float', 'wrong', "expected types <class 'float'>, <class 'int'> or None")
 
     def test_integer(self):
         self._single('f_integer')
-        self._single_raise('f_integer', 'wrong', 'expected int or NoneType')
+        self._single_raise('f_integer', 'wrong', "expected type <class 'int'> or None")
 
     def test_ip(self):
         self._single('f_ip')
-        self._single_raise('f_ip', 123, 'expected str or NoneType')
+        self._single_raise('f_ip', 123, "expected type <class 'str'> or None")
 
     def test_json(self):
         self._single('f_json')
 
     def test_slug(self):
         self._single('f_slug')
-        self._single_raise('f_slug', 123, 'expected str or NoneType')
+        self._single_raise('f_slug', 123, "expected type <class 'str'> or None")
 
     def test_text(self):
         self._single('f_text')
-        self._single_raise('f_text', 123, 'expected str or NoneType')
+        self._single_raise('f_text', 123, "expected type <class 'str'> or None")
 
     def test_time(self):
         self._single('f_time')
-        self._single_raise('f_time', 'wrong', 'expected datetime.time or NoneType')
+        self._single_raise('f_time', 'wrong', "expected type <class 'datetime.time'> or None")
 
     def test_uuid(self):
         self._single('f_uuid')
-        self._single_raise('f_uuid', 'wrong', 'expected UUID or NoneType')
+        self._single_raise('f_uuid', 'wrong', "expected type <class 'uuid.UUID'> or None")
 
     def test_updatefull_multiple(self):
         a = []
@@ -335,11 +335,11 @@ class TestCopyUpdateNotNull(TestCase):
 
     def test_biginteger(self):
         self._single('f_biginteger')
-        self._single_raise('f_biginteger', 'wrong', 'expected int type')
+        self._single_raise('f_biginteger', 'wrong', "expected type <class 'int'>")
 
     def test_binary(self):
         self._single('f_binary')
-        self._single_raise('f_binary', 'wrong', 'expected memoryview or bytes type')
+        self._single_raise('f_binary', 'wrong', "expected types <class 'memoryview'> or <class 'bytes'>")
     
     def test_binary_big(self):
         # >64k
@@ -357,62 +357,62 @@ class TestCopyUpdateNotNull(TestCase):
 
     def test_boolean(self):
         self._single('f_boolean')
-        self._single_raise('f_boolean', 'wrong', 'expected bool type')
+        self._single_raise('f_boolean', 'wrong', "expected type <class 'bool'>")
     
     def test_char(self):
         self._single('f_char')
-        self._single_raise('f_char', 123, 'expected str type')
+        self._single_raise('f_char', 123, "expected type <class 'str'>")
 
     def test_date(self):
         self._single('f_date')
-        self._single_raise('f_date', 'wrong', 'expected datetime.date type')
+        self._single_raise('f_date', 'wrong', "expected type <class 'datetime.date'>")
 
     def test_datetime(self):
         self._single('f_datetime')
-        self._single_raise('f_datetime', 'wrong', 'expected datetime type')
+        self._single_raise('f_datetime', 'wrong', "expected type <class 'datetime.datetime'>")
 
     def test_decimal(self):
         self._single('f_decimal')
-        self._single_raise('f_decimal', 'wrong', 'expected Decimal type')
+        self._single_raise('f_decimal', 'wrong', "expected type <class 'decimal.Decimal'>")
 
     def test_duration(self):
         self._single('f_duration')
-        self._single_raise('f_duration', 'wrong', 'expected timedelta type')
+        self._single_raise('f_duration', 'wrong', "expected type <class 'datetime.timedelta'>")
 
     def test_email(self):
         self._single('f_email')
-        self._single_raise('f_email', 123, 'expected str type')
+        self._single_raise('f_email', 123, "expected type <class 'str'>")
 
     def test_float(self):
         self._single('f_float')
-        self._single_raise('f_float', 'wrong', 'expected float or int type')
+        self._single_raise('f_float', 'wrong', "expected types <class 'float'> or <class 'int'>")
 
     def test_integer(self):
         self._single('f_integer')
-        self._single_raise('f_integer', 'wrong', 'expected int type')
+        self._single_raise('f_integer', 'wrong', "expected type <class 'int'>")
 
     def test_ip(self):
         self._single('f_ip')
-        self._single_raise('f_ip', 123, 'expected str type')
+        self._single_raise('f_ip', 123, "expected type <class 'str'>")
 
     def test_json(self):
         self._single('f_json')
 
     def test_slug(self):
         self._single('f_slug')
-        self._single_raise('f_slug', 123, 'expected str type')
+        self._single_raise('f_slug', 123, "expected type <class 'str'>")
 
     def test_text(self):
         self._single('f_text')
-        self._single_raise('f_text', 123, 'expected str type')
+        self._single_raise('f_text', 123, "expected type <class 'str'>")
 
     def test_time(self):
         self._single('f_time')
-        self._single_raise('f_time', 'wrong', 'expected datetime.time type')
+        self._single_raise('f_time', 'wrong', "expected type <class 'datetime.time'>")
 
     def test_uuid(self):
         self._single('f_uuid')
-        self._single_raise('f_uuid', 'wrong', 'expected UUID type')
+        self._single_raise('f_uuid', 'wrong', "expected type <class 'uuid.UUID'>")
 
 
     def test_updatefull_multiple(self):
@@ -554,7 +554,7 @@ class TestCopyUpdateHStore(TestCase):
         obj.hstore = 123
         self.assertRaisesMessage(
             TypeError,
-            'expected dict or NoneType',
+            "expected type <class 'dict'> or None",
             lambda : PostgresFields.objects.copy_update([obj], ['hstore'])
         )
 
@@ -563,7 +563,7 @@ class TestCopyUpdateHStore(TestCase):
         obj.hstore = {123: 'nothing'}
         self.assertRaisesMessage(
             TypeError,
-            'expected str type for keys',
+            "expected type <class 'str'> for keys",
             lambda : PostgresFields.objects.copy_update([obj], ['hstore'])
         )
 
@@ -572,6 +572,47 @@ class TestCopyUpdateHStore(TestCase):
         obj.hstore = {'wrong': 123}
         self.assertRaisesMessage(
             TypeError,
-            'expected str or NoneType for values',
+            "expected type <class 'str'> or None for values",
             lambda : PostgresFields.objects.copy_update([obj], ['hstore'])
         )
+
+
+class TestCopyUpdateRangeFields(TestCase):
+    def _singles(self, fieldname, value):
+        obj1 = PostgresFields.objects.create()
+        setattr(obj1, fieldname, value)
+        PostgresFields.objects.bulk_update([obj1], [fieldname])
+        obj2 = PostgresFields.objects.create()
+        setattr(obj2, fieldname, value)
+        PostgresFields.objects.copy_update([obj2], [fieldname])
+        self.assertEqual(
+            getattr(PostgresFields.objects.get(pk=obj2.pk), fieldname),
+            getattr(PostgresFields.objects.get(pk=obj1.pk), fieldname)
+        )
+
+    def _single_raise(self, fieldname, wrong_value, msg):
+        a = PostgresFields.objects.create()
+        setattr(a, fieldname, wrong_value)
+        self.assertRaisesMessage(TypeError, msg, lambda : PostgresFields.objects.copy_update([a], [fieldname]))
+
+    def test_integer_range(self):
+        values = [None, NumericRange(2, 8, '[)'), NumericRange(2, 8), NumericRange(-1, 1, '[]')]
+        for v in values:
+            self._singles('int_r', v)
+        self._single_raise('int_r', NumericRange('[[[', 8, '[)'), "expected type <class 'int'> or None")
+
+    def test_datetime_range(self):
+        values = [None, DateTimeTZRange(dt_utc, datetime.datetime(2040, 1, 1))]
+        for v in values:
+            self._singles('dt_r', v)
+        self._single_raise('dt_r', DateTimeTZRange('[[[', 8, '[)'), "expected type <class 'datetime.datetime'> or None")
+
+    def test_date_range(self):
+        values = [None, DateRange(dt_utc.date(), datetime.date(2040, 1, 1))]
+        for v in values:
+            self._singles('date_r', v)
+        self._single_raise('date_r', DateRange('[[[', 8, '[)'), "expected type <class 'datetime.date'> or None")
+
+
+
+
