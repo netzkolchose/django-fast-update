@@ -24,7 +24,7 @@ setup(
     author='netzkolchose',
     author_email='j.breitbart@netzkolchose.de',
     url='https://github.com/netzkolchose/django-fast-update',
-    download_url='https://github.com/netzkolchose/django-fast-update/archive/v0.0.2.tar.gz',
+    download_url='https://github.com/netzkolchose/django-fast-update/archive/v0.0.3.tar.gz',
     keywords=['django', 'bulk_update', 'fast', 'update', 'fast_update'],
     classifiers=[
         'Development Status :: 3 - Alpha',
