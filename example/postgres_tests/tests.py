@@ -13,6 +13,7 @@ import pytz
 import uuid
 from decimal import Decimal
 from fast_update.copy import get_encoder, register_fieldclass, Int, IntOrNone
+import json
 
 
 dt = datetime.datetime.now()
@@ -710,7 +711,7 @@ ARRAY_SINGLES = {
         [None],
         [None, None],
         [None, None, 0.00000000001, 1.23456789, -1.23456789, 1e-05, 1e25],
-        [float('-inf'), None] # FIXME: needs explcit NaN test
+        [float('-inf'), None]
     ],
     'f_integer': [
         None,
@@ -739,7 +740,7 @@ ARRAY_SINGLES = {
             '': 'empty key',
             'different quotes': '" \\" \\\\"',
             '€': 'ümläütß'
-        }, None, 'plain string', (1,2,3)]    # NOTE: list type is reserved for array descent
+        }, None, 'plain string', (1,2,'\t\t')]    # NOTE: list type is reserved for array descent
     ],
     'f_slug': [
         None,
@@ -790,7 +791,6 @@ ARRAY_SINGLES = {
         [None, None],
         [None, random_uuid, random_uuid]
     ],
-    # TODO: 2d tests
     'f_biginteger2': [],
     'f_binary2': [],
     'f_boolean2': [],
@@ -814,6 +814,8 @@ ARRAY_SINGLES = {
 
 
 class TestCopyUpdateArray(TestCase):
+    # TODO: test float NaN for arrays
+    # TODO: 2d tests
     def test_singles(self):
         for fieldname, values in ARRAY_SINGLES.items():
             for value in values:
@@ -826,7 +828,6 @@ class TestCopyUpdateArray(TestCase):
                 FieldUpdateArray.objects.copy_update([update_b], [fieldname])
                 res_a, res_b = FieldUpdateArray.objects.all().values(fieldname)
                 self.assertEqual(res_b[fieldname], res_a[fieldname])
-
 
 
 class TestCopyUpdateWickedText(TestCase):
@@ -843,7 +844,7 @@ class TestCopyUpdateWickedText(TestCase):
             obj.f_text = v
             FieldUpdate.objects.copy_update([obj], ['f_text'])
             self.assertEqual(FieldUpdate.objects.get(pk=obj.pk).f_text, v)
-        # array write
+        # array write singles
         obj_ar = FieldUpdateArray.objects.create()
         obj_ar.f_text = list(values)
         FieldUpdateArray.objects.copy_update([obj_ar], ['f_text'])
@@ -852,8 +853,39 @@ class TestCopyUpdateWickedText(TestCase):
         obj_ar.f_text = [values, values]
         FieldUpdateArray.objects.copy_update([obj_ar], ['f_text'])
         self.assertEqual(FieldUpdateArray.objects.get(pk=obj_ar.pk).f_text, [values, values])
-
+        # array 2d
+        obj_ar.f_text2 = [list(values), [values] + [None]*254]
+        FieldUpdateArray.objects.copy_update([obj_ar], ['f_text2'])
+        self.assertEqual(FieldUpdateArray.objects.get(pk=obj_ar.pk).f_text2, [list(values), [values] + [None]*254])
 
     def test_blns(self):
-        # TODO...
-        pass
+        # taken from https://github.com/minimaxir/big-list-of-naughty-strings
+        from django.conf import settings
+        from os import path
+        with open(path.join(settings.BASE_DIR, 'blns.json')) as f:
+            strings = json.load(f)
+            for s in strings:
+                a = FieldUpdate.objects.create()
+                b = FieldUpdate.objects.create()
+                a.f_text = s
+                b.f_text = s
+                FieldUpdate.objects.bulk_update([a], ['f_text'])
+                FieldUpdate.objects.copy_update([b], ['f_text'])
+                self.assertEqual(
+                    FieldUpdate.objects.get(pk=b.pk).f_text,
+                    FieldUpdate.objects.get(pk=a.pk).f_text
+                )
+            # array write
+            a_ar = FieldUpdateArray.objects.create()
+            b_ar = FieldUpdateArray.objects.create()
+            a_ar.f_text = strings
+            b_ar.f_text = strings
+            FieldUpdateArray.objects.bulk_update([a_ar], ['f_text'])
+            FieldUpdateArray.objects.copy_update([b_ar], ['f_text'])
+            self.assertEqual(
+                FieldUpdateArray.objects.get(pk=b_ar.pk).f_text,
+                FieldUpdateArray.objects.get(pk=a_ar.pk).f_text
+            )
+
+
+# TODO: test hstore/range types with array...

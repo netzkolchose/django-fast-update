@@ -14,7 +14,7 @@ from django.contrib.postgres.fields import (HStoreField, ArrayField, IntegerRang
 from psycopg2.extras import Range
 
 
-# TODO: postgres custom field support: arrays (cumbersome)
+# TODO: typings, docs cleanup
 # TODO: import guard in query.py
 
 
@@ -252,6 +252,7 @@ def FloatOrNone(v, lazy):
 FloatOrNone.array_escape = False
 
 
+# TODO: test and document Json vs. JsonOrNone behavior (sql null vs. json null)
 def Json(v, lazy):
     """
     Default JSON encoder using ``json.dumps``.
@@ -428,7 +429,7 @@ def array_factory(field):
         if v is None:
             return SQL_NULL if dim else NULL
         if isinstance(v, (list,)):
-            return f'{{{",".join(wrap(value, lazy, dim+1) for value in v)}}}'
+            return f'{{{",".join(wrap(e, lazy, dim+1) for e in v)}}}'
         final = str(enc(v, lazy))
         return array_escape(final) if enc.array_escape else final
     return wrap
