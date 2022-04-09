@@ -17,19 +17,20 @@ def sanity_check(model, objs, fields, batch_size):
         return 0
     if any(obj.pk is None for obj in objs):
         raise ValueError('All fast_update() objects must have a primary key set.')
-    _fields = [model._meta.get_field(name) for name in fields]
-    if any(not f.concrete or f.many_to_many for f in _fields):
+    fields = [model._meta.get_field(name) for name in fields]
+    if any(not f.concrete or f.many_to_many for f in fields):
         raise ValueError('fast_update() can only be used with concrete fields.')
-    if any(f.primary_key for f in _fields):
+    if any(f.primary_key for f in fields):
         raise ValueError('fast_update() cannot be used with primary key fields.')
     for obj in objs:
         # FIXME: django main has an additional argument 'fields'
         obj._prepare_related_fields_for_save(operation_name='fast_update')
         # additionally raise on f-expression
-        for field in _fields:
+        for field in fields:
             attr = getattr(obj, field.attname)
             if hasattr(attr, 'resolve_expression'):
                 raise ValueError('fast_update() cannot be used with f-expressions.')
+    return fields
 
 
 class FastUpdateQuerySet(QuerySet):
@@ -43,6 +44,7 @@ class FastUpdateQuerySet(QuerySet):
         TODO...
         """
         objs = tuple(objs)
+        fields = set(fields or [])
         sanity_check(self.model, objs, fields, batch_size)
         return fast_update(self, objs, fields, batch_size)
 
@@ -62,6 +64,7 @@ class FastUpdateQuerySet(QuerySet):
             raise NotSupportedError(
                 f"copy_update() is not supported on '{connection.vendor}' backend")
         objs = tuple(objs)
+        fields = set(fields or [])
         sanity_check(self.model, objs, fields, 123)
         return copy_update(self, objs, fields)
     
