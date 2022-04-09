@@ -83,21 +83,21 @@ def text_escape(v):
         .replace('\r', '\\r').replace('\t', '\\t').replace('\v', '\\v'))
 
 
-def Int(v, lazy):
+def Int(v, fname, lazy):
     """Test and pass along ``int``, raise for any other."""
     if isinstance(v, int):
         return v
-    raise TypeError(f'expected type {int}')
+    raise TypeError(f'expected type {int} for field "{fname}", got {type(v)}')
 Int.array_escape = False
 
 
-def IntOrNone(v, lazy):
+def IntOrNone(v, fname, lazy):
     """Same as ``Int``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, int):
         return v
-    raise TypeError(f'expected type {int} or None')
+    raise TypeError(f'expected type {int} or None for field "{fname}", got {type(v)}')
 IntOrNone.array_escape = False
 
 
@@ -112,7 +112,7 @@ def _lazy_binary(f, v):
             byte_pos += 65536
 
 
-def Binary(v, lazy):
+def Binary(v, fname, lazy):
     """
     Test and pass along ``(memoryview, bytes)`` types, raise for any other.
 
@@ -127,11 +127,11 @@ def Binary(v, lazy):
             lazy.append((_lazy_binary, v))
             return '\\\\x' + LAZY_PLACEHOLDER
         return '\\\\x' + v.hex()
-    raise TypeError(f'expected types {memoryview} or {bytes}')
+    raise TypeError(f'expected types {memoryview} or {bytes} for field "{fname}", got {type(v)}')
 Binary.array_escape = True
 
 
-def BinaryOrNone(v, lazy):
+def BinaryOrNone(v, fname, lazy):
     """Same as ``Binary``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
@@ -140,120 +140,120 @@ def BinaryOrNone(v, lazy):
             lazy.append((_lazy_binary, v))
             return '\\\\x' + LAZY_PLACEHOLDER
         return '\\\\x' + v.hex()
-    raise TypeError(f'expected types {memoryview}, {bytes} or None')
+    raise TypeError(f'expected types {memoryview}, {bytes} or None for field "{fname}", got {type(v)}')
 BinaryOrNone.array_escape = True
 
 
-def Boolean(v, lazy):
+def Boolean(v, fname, lazy):
     """Test and pass along ``bool``, raise for any other."""
     if isinstance(v, bool):
         return v
-    raise TypeError(f'expected type {bool}')
+    raise TypeError(f'expected type {bool} for field "{fname}", got {type(v)}')
 Boolean.array_escape = False
 
 
-def BooleanOrNone(v, lazy):
+def BooleanOrNone(v, fname, lazy):
     """Same as ``Boolean``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, bool):
         return v
-    raise TypeError(f'expected type {bool} or None')
+    raise TypeError(f'expected type {bool} or None for field "{fname}", got {type(v)}')
 BooleanOrNone.array_escape = False
 
 
-def Date(v, lazy):
+def Date(v, fname, lazy):
     """Test and pass along ``datetime.date``, raise for any other."""
     if isinstance(v, date):
         return v
-    raise TypeError(f'expected type {date}')
+    raise TypeError(f'expected type {date} for field "{fname}", got {type(v)}')
 Date.array_escape = False
 
 
-def DateOrNone(v, lazy):
+def DateOrNone(v, fname, lazy):
     """Same as ``Date``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, date):
         return v
-    raise TypeError(f'expected type {date} or None')
+    raise TypeError(f'expected type {date} or None for field "{fname}", got {type(v)}')
 DateOrNone.array_escape = False
 
 
-def Datetime(v, lazy):
+def Datetime(v, fname, lazy):
     """Test and pass along ``datetime``, raise for any other."""
     if isinstance(v, datetime):
         return v
-    raise TypeError(f'expected type {datetime}')
+    raise TypeError(f'expected type {datetime} for field "{fname}", got {type(v)}')
 Datetime.array_escape = True
 
 
-def DatetimeOrNone(v, lazy):
+def DatetimeOrNone(v, fname, lazy):
     """Same as ``Datetime``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, datetime):
         return v
-    raise TypeError(f'expected type {datetime} or None')
+    raise TypeError(f'expected type {datetime} or None for field "{fname}", got {type(v)}')
 DatetimeOrNone.array_escape = True
 
 
-def Numeric(v, lazy):
+def Numeric(v, fname, lazy):
     """Test and pass along ``Decimal``, raise for any other."""
     if isinstance(v, Decimal):
         return v
-    raise TypeError(f'expected type {Decimal}')
+    raise TypeError(f'expected type {Decimal} for field "{fname}", got {type(v)}')
 Numeric.array_escape = False
 
 
-def NumericOrNone(v, lazy):
+def NumericOrNone(v, fname, lazy):
     """Same as ``Numeric``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, Decimal):
         return v
-    raise TypeError(f'expected type {Decimal} or None')
+    raise TypeError(f'expected type {Decimal} or None for field "{fname}", got {type(v)}')
 NumericOrNone.array_escape = False
 
 
-def Duration(v, lazy):
+def Duration(v, fname, lazy):
     """Test and pass along ``timedelta``, raise for any other."""
     if isinstance(v, timedelta):
         return v
-    raise TypeError(f'expected type {timedelta}')
+    raise TypeError(f'expected type {timedelta} for field "{fname}", got {type(v)}')
 Duration.array_escape = True
 
 
-def DurationOrNone(v, lazy):
+def DurationOrNone(v, fname, lazy):
     """Same as ``Duration``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, timedelta):
         return v
-    raise TypeError(f'expected type {timedelta} or None')
+    raise TypeError(f'expected type {timedelta} or None for field "{fname}", got {type(v)}')
 DurationOrNone.array_escape = True
 
 
-def Float(v, lazy):
+def Float(v, fname, lazy):
     """Test and pass along ``float`` or ``int``, raise for any other."""
     if isinstance(v, (float, int)):
         return v
-    raise TypeError(f'expected types {float} or {int}')
+    raise TypeError(f'expected types {float} or {int} for field "{fname}", got {type(v)}')
 Float.array_escape = False
 
 
-def FloatOrNone(v, lazy):
+def FloatOrNone(v, fname, lazy):
     """Same as ``Float``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, (float, int)):
         return v
-    raise TypeError(f'expected types {float}, {int} or None')
+    raise TypeError(f'expected types {float}, {int} or None for field "{fname}", got {type(v)}')
 FloatOrNone.array_escape = False
 
 
 # TODO: test and document Json vs. JsonOrNone behavior (sql null vs. json null)
-def Json(v, lazy):
+def Json(v, fname, lazy):
     """
     Default JSON encoder using ``json.dumps``.
 
@@ -263,7 +263,7 @@ def Json(v, lazy):
 Json.array_escape = True
 
 
-def JsonOrNone(v, lazy):
+def JsonOrNone(v, fname, lazy):
     """
     Default JSON encoder using ``json.dumps``.
 
@@ -275,7 +275,7 @@ def JsonOrNone(v, lazy):
 JsonOrNone.array_escape = True
 
 
-def Text(v, lazy):
+def Text(v, fname, lazy):
     """
     Test and encode ``str``, raise for any other.
     
@@ -284,53 +284,53 @@ def Text(v, lazy):
     """
     if isinstance(v, str):
         return text_escape(v)
-    raise TypeError(f'expected type {str}')
+    raise TypeError(f'expected type {str} for field "{fname}", got {type(v)}')
 Text.array_escape = True
 
 
-def TextOrNone(v, lazy):
+def TextOrNone(v, fname, lazy):
     """Same as ``Text``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, str):
         return text_escape(v)
-    raise TypeError(f'expected type {str} or None')
+    raise TypeError(f'expected type {str} or None for field "{fname}", got {type(v)}')
 TextOrNone.array_escape = True
 
 
-def Time(v, lazy):
+def Time(v, fname, lazy):
     """Test and pass along ``datetime.time``, raise for any other."""
     if isinstance(v, dt_time):
         return v
-    raise TypeError(f'expected type {dt_time}')
+    raise TypeError(f'expected type {dt_time} for field "{fname}", got {type(v)}')
 Time.array_escape = False
 
 
-def TimeOrNone(v, lazy):
+def TimeOrNone(v, fname, lazy):
     """Same as ``Time``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, dt_time):
         return v
-    raise TypeError(f'expected type {dt_time} or None')
+    raise TypeError(f'expected type {dt_time} or None for field "{fname}", got {type(v)}')
 TimeOrNone.array_escape = False
 
 
-def Uuid(v, lazy):
+def Uuid(v, fname, lazy):
     """Test and pass along ``UUID``, raise for any other."""
     if isinstance(v, UUID):
         return v
-    raise TypeError(f'expected type {UUID}')
+    raise TypeError(f'expected type {UUID} for field "{fname}", got {type(v)}')
 Uuid.array_escape = False
 
 
-def UuidOrNone(v, lazy):
+def UuidOrNone(v, fname, lazy):
     """Same as ``Uuid``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, UUID):
         return v
-    raise TypeError(f'expected type {UUID} or None')
+    raise TypeError(f'expected type {UUID} or None for field "{fname}", got {type(v)}')
 UuidOrNone.array_escape = False
 
 
@@ -367,7 +367,7 @@ def array_escape(v):
     return '"' + v.replace('\\\\', '\\\\\\\\').replace('"', '\\\\"') + '"'
 
 
-def HStore(v, lazy):
+def HStore(v, fname, lazy):
     """
     HStore field encoder. Expects a ``dict`` as input type
     with str keys and str|None values. Any other types will raise.
@@ -379,42 +379,42 @@ def HStore(v, lazy):
         parts = []
         for k, v in v.items():
             if not isinstance(k, str):
-                raise TypeError(f'expected type {str} for keys')
+                raise TypeError(f'expected type {str} for keys of field "{fname}"')
             if v is not None and not isinstance(v, str):
-                raise TypeError(f'expected type {str} or None for values')
+                raise TypeError(f'expected type {str} or None for values of field "{fname}"')
             parts.append(
                 f'{quote(text_escape_nested(k))}=>'
                 f'{SQL_NULL if v is None else quote(text_escape_nested(v))}'
             )
         return ','.join(parts)
-    raise TypeError(f'expected type {dict}')
+    raise TypeError(f'expected type {dict} for field "{fname}", got {type(v)}')
 HStore.array_escape = True
 
 
-def HStoreOrNone(v, lazy):
+def HStoreOrNone(v, fname, lazy):
     """Same as ``Hstore``, additionally handling ``None`` as NULL."""
     if v is None:
         return NULL
     if isinstance(v, dict):
-        return HStore(v, lazy)
-    raise TypeError(f'expected type {dict} or None')
+        return HStore(v, fname, lazy)
+    raise TypeError(f'expected type {dict} or None for field "{fname}", got {type(v)}')
 HStoreOrNone.array_escape = True
 
 
 def range_factory(_type):
-    def wrap(v, lazy):
+    def encode_range(v, fname, lazy):
         if isinstance(v, Range) and all(map(lambda e: isinstance(e, _type), (v.lower, v.upper))):
             return v
-        raise TypeError(f'expected type {_type}')
-    wrap.array_escape = True
-    def wrap_none(v, lazy):
+        raise TypeError(f'expected type {_type} for field "{fname}", got {type(v)}')
+    encode_range.array_escape = True
+    def encode_range_none(v, fname, lazy):
         if v is None:
             return NULL
         if isinstance(v, Range) and all(map(lambda e: isinstance(e, _type), (v.lower, v.upper))):
             return v
-        raise TypeError(f'expected type {_type} or None')
-    wrap_none.array_escape = True
-    return wrap, wrap_none
+        raise TypeError(f'expected type {_type} or None for field "{fname}", got {type(v)}')
+    encode_range_none.array_escape = True
+    return encode_range, encode_range_none
 
 
 # TODO: cache encoder for later calls?
@@ -425,14 +425,14 @@ def array_factory(field):
     while isinstance(base, ArrayField):
         base = base.base_field
     enc = get_encoder(base)
-    def wrap(v, lazy, dim=0):
+    def encode_array(v, fname, lazy, dim=0):
         if v is None:
             return SQL_NULL if dim else NULL
         if isinstance(v, (list,)):
-            return f'{{{",".join(wrap(e, lazy, dim+1) for e in v)}}}'
-        final = str(enc(v, lazy))
+            return f'{{{",".join(encode_array(e, fname, lazy, dim+1) for e in v)}}}'
+        final = str(enc(v, fname, lazy))
         return array_escape(final) if enc.array_escape else final
-    return wrap
+    return encode_array
 
 
 ENCODERS = {
@@ -518,12 +518,15 @@ def threaded_copy(cur, fr, tname, columns):
     cur.copy_from(fr, tname, size=65536, columns=columns)
 
 
-def copy_from(c, tname, data, columns, get, encs, encoding):
+def copy_from(c, tname, data, fnames, columns, get, encs, encoding):
     use_thread = False
     payload = bytearray()
     lazy = []
     for o in data:
-        payload += '\t'.join([f'{enc(el, lazy)}' for enc, el in zip(encs, get(o))]).encode(encoding)
+        payload += '\t'.join([
+            f'{enc(el, fname, lazy)}'
+            for enc, el, fname in zip(encs, get(o), fnames)
+        ]).encode(encoding)
         payload += b'\n'
         if len(payload) > 65535:
             # if we exceed 64k, switch to threaded chunkwise processing
@@ -531,7 +534,10 @@ def copy_from(c, tname, data, columns, get, encs, encoding):
                 r, w = os.pipe()
                 fr = os.fdopen(r, 'rb')
                 fw = os.fdopen(w, 'wb')
-                t = Thread(target=threaded_copy, args=[c.connection.cursor(), fr, tname, columns])
+                t = Thread(
+                    target=threaded_copy,
+                    args=[c.connection.cursor(), fr, tname, columns]
+                )
                 t.start()
                 use_thread = True
             if lazy:
@@ -630,7 +636,7 @@ def copy_update(
         temp = f'temp_cu_{model._meta.db_table}'
         c.execute(f'DROP TABLE IF EXISTS "{temp}"')
         c.execute(f'CREATE TEMPORARY TABLE "{temp}" ({create_columns(column_def)})')
-        copy_from(c, temp, objs, colnames, get, encs,
+        copy_from(c, temp, objs, attnames, colnames, get, encs,
             encoding or CONNECTION_ENCODINGS[c.connection.encoding])
         c.execute(f'ANALYZE "{temp}" ({pk_field.column})')
         c.execute(update_sql(model._meta.db_table, temp, pk_field.column, fields))
