@@ -488,16 +488,19 @@ def register_fieldclass(field_cls, encoder, encoder_none=None):
     ENCODERS[field_cls] = (encoder, encoder_none or encoder)
 
 
-def get_encoder(field):
+def get_encoder(field, null=None):
     """Get registered encoder for field."""
+    if null is None:
+        null = field.null
     if field.is_relation:
-        return get_encoder(field.target_field)
+        return get_encoder(field.target_field, null)
     if isinstance(field, ArrayField):
+        # FIXME: null handling for arrays
         return array_factory(field)
     for cls in type(field).__mro__:
         enc = ENCODERS.get(cls)
         if enc:
-            return enc[field.null]
+            return enc[null]
     raise NotImplementedError(f'no suitable encoder found for field {field}')
 
 
