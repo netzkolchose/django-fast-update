@@ -420,11 +420,12 @@ def range_factory(_type):
 # TODO: cache encoder for later calls?
 # NOTE: array descent only happens on lists (to allow tuples as json native)
 # FIXME: should we respect null field setting in dim descent?
-def array_factory(field):
-    base = field.base_field
-    while isinstance(base, ArrayField):
-        base = base.base_field
-    enc = get_encoder(base)
+def array_factory(field, enc=None):
+    if not enc:
+        base = field.base_field
+        while isinstance(base, ArrayField):
+            base = base.base_field
+        enc = get_encoder(base)
     def encode_array(v, fname, lazy, dim=0):
         if v is None:
             return SQL_NULL if dim else NULL
@@ -626,13 +627,13 @@ def copy_update(
     pk_field = model._meta.pk
     fields = [model._meta.get_field(fname) for fname in local_fieldnames]
     all_fields = [pk_field] + fields
-    attnames, colnames, encs, column_def = zip(*[
-        (f.attname, f.column, get_encoder(f), (f.column, f.db_type(conn)))
+    attnames, colnames, column_def = zip(*[
+        (f.attname, f.column, (f.column, f.db_type(conn)))
             for f in all_fields])
     if field_encoders:
-        for fname, encoder in field_encoders.items():
-            if fname in attnames:
-                encs[attnames.index(fname)] = encoder
+        encs = [field_encoders.get(f.attname, get_encoder(f)) for f in all_fields]
+    else:
+        encs = [get_encoder(f) for f in all_fields]
     get = attrgetter(*attnames)
     rows_updated = 0
     with transaction.atomic(using=conn.alias, savepoint=False), conn.cursor() as c:

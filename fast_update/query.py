@@ -1,7 +1,7 @@
 from django.db import connections
 from django.db.models import QuerySet, Model, Manager
 from django.db.utils import NotSupportedError
-from typing import Optional, Sequence
+from typing import Any, Dict, Optional, Sequence
 
 from .fast import fast_update
 from .copy import copy_update
@@ -53,7 +53,9 @@ class FastUpdateQuerySet(QuerySet):
     def copy_update(
         self,
         objs: Sequence[Model],
-        fields: Sequence[str]
+        fields: Sequence[str],
+        field_encoders: Optional[Dict[str, Any]] = None,
+        encoding: Optional[str] = None
     ) -> int:
         """
         TODO...
@@ -62,11 +64,11 @@ class FastUpdateQuerySet(QuerySet):
         connection = connections[self.db]
         if connection.vendor != 'postgresql':
             raise NotSupportedError(
-                f"copy_update() is not supported on '{connection.vendor}' backend")
+                f'copy_update() is not supported on "{connection.vendor}" backend')
         objs = tuple(objs)
         fields = set(fields or [])
         sanity_check(self.model, objs, fields, 123)
-        return copy_update(self, objs, fields)
+        return copy_update(self, objs, fields, field_encoders, encoding)
     
     copy_update.alters_data = True
 

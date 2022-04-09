@@ -12,7 +12,7 @@ import datetime
 import pytz
 import uuid
 from decimal import Decimal
-from fast_update.copy import get_encoder, register_fieldclass, Int, IntOrNone
+from fast_update.copy import get_encoder, register_fieldclass, Int, IntOrNone, array_factory
 import json
 
 
@@ -442,20 +442,6 @@ class TestCopyUpdateNotNull(TestCase):
         for r in results[201:]:
             for f in CU_FIELDS:
                 self.assertEqual(r[f], first[f])
-
-
-class TestFieldRegistration(TestCase):
-    def test_register(self):
-        f = CustomField()
-        f_null = CustomField(null=True)
-        self.assertRaisesMessage(
-            NotImplementedError,
-            'no suitable encoder found for field <postgres_tests.models.CustomField>',
-            lambda : get_encoder(f)
-        )
-        register_fieldclass(CustomField, Int, IntOrNone)
-        self.assertEqual(get_encoder(f), Int)
-        self.assertEqual(get_encoder(f_null), IntOrNone)
 
 
 class TestForeignkeyField(TestCase):
@@ -888,4 +874,67 @@ class TestCopyUpdateWickedText(TestCase):
             )
 
 
+class TestFieldRegistration(TestCase):
+    def test_register(self):
+        f = CustomField()
+        f_null = CustomField(null=True)
+        self.assertRaisesMessage(
+            NotImplementedError,
+            'no suitable encoder found for field <postgres_tests.models.CustomField>',
+            lambda : get_encoder(f)
+        )
+        register_fieldclass(CustomField, Int, IntOrNone)
+        self.assertEqual(get_encoder(f), Int)
+        self.assertEqual(get_encoder(f_null), IntOrNone)
+
+
+class TestEncoderOverrides(TestCase):
+    @property
+    def base_encoder(self):
+        # some custom encoder pulling floats from german comma str repr
+        def customEnc(v, fname, lazy):
+            return float(v.replace(',', '.'))
+        customEnc.array_escape = False
+        return customEnc
+
+    def test_override(self):
+        objA = FieldUpdate.objects.create()
+        objB = FieldUpdate.objects.create()
+        objA.f_float = '1,2345'
+        objB.f_float = '-0,00001'
+
+        # write to db with custom encoder
+        FieldUpdate.objects.copy_update(
+            [objA, objB], ['f_float'],
+            field_encoders={'f_float': self.base_encoder}
+        )
+        self.assertEqual(FieldUpdate.objects.get(pk=objA.pk).f_float, 1.2345)
+        self.assertEqual(FieldUpdate.objects.get(pk=objB.pk).f_float, -0.00001)
+
+    def test_override_array(self):
+        objA = FieldUpdateArray.objects.create()
+        objB = FieldUpdateArray.objects.create()
+        objA.f_float = ['1,2345', '666']
+        objB.f_float = ['-0,00001', 'inf']
+
+        # write to db with custom encoder
+        field = FieldUpdateArray._meta.get_field('f_float')
+        FieldUpdateArray.objects.copy_update(
+            [objA, objB], ['f_float'],
+            field_encoders={'f_float': array_factory(field, self.base_encoder)}
+        )
+        self.assertEqual(FieldUpdateArray.objects.get(pk=objA.pk).f_float, [1.2345, 666])
+        self.assertEqual(FieldUpdateArray.objects.get(pk=objB.pk).f_float, [-0.00001, float('inf')])
+
+
+
+
+
+
+
+
+
+
+
 # TODO: test hstore/range types with array...
+# TODO: document encoder interface
