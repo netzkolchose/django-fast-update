@@ -87,3 +87,12 @@ class FieldUpdateArray(models.Model):
     f_time2 = ArrayField(ArrayField(models.TimeField(null=True), null=True), null=True)
     f_url2 = ArrayField(ArrayField(models.URLField(null=True), null=True), null=True)
     f_uuid2 = ArrayField(ArrayField(models.UUIDField(null=True), null=True), null=True)
+
+
+class TestCoverage(models.Model):
+    objects = FastUpdateManager()
+    hstore = HStoreField()
+    int_r = IntegerRangeField()
+    int_2d = ArrayField(ArrayField(models.IntegerField(default=1)))
+    hstore_2d = ArrayField(ArrayField(HStoreField()))
+    int_r_2d = ArrayField(ArrayField(IntegerRangeField()))

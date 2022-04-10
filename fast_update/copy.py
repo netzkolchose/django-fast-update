@@ -16,6 +16,7 @@ from psycopg2.extras import Range
 
 # TODO: typings, docs cleanup
 # TODO: import guard in query.py
+# TODO: document encoder interface
 
 
 # postgres connection encodings mapped to python
@@ -515,15 +516,16 @@ def array_factory(encoder, depth=1, null=False):
                 if null:
                     return NULL
                 raise TypeError(f'expected type {list} or {tuple} for field "{fname}", got None')
-            if is_empty_array(v):
-                return '{}'
             if isinstance(v, (list, tuple)):
+                # test for empty reduction
+                if is_empty_array(v):
+                    return '{}'
                 # other than bulk_update we have to do the balance check in python to get
                 # a meaningful error, as postgres throws only an unspecific syntax error
                 if depth > 1 and not is_balanced(v, depth):
                     raise ValueError(f'multidimensional arrays must be balanced, got {v}')
                 return f'{{{",".join(encode_array(e, fname, lazy, dim+1) for e in v)}}}'
-            raise TypeError(f'expected type {list}, {tuple} or None for field "{fname}", got {type(v)}')
+            raise TypeError(f'expected type {list} or {tuple} for field "{fname}", got {type(v)}')
         if v is None:
             return SQL_NULL
         if isinstance(v, (list, tuple)) and dim < depth:

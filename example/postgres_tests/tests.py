@@ -1,3 +1,4 @@
+from math import isnan
 from django.db import connection
 
 import unittest
@@ -5,7 +6,7 @@ if connection.vendor != 'postgresql':
     raise unittest.SkipTest('postgres only tests')
 
 from django.test import TestCase
-from .models import PostgresFields, FieldUpdateNotNull, CustomField, FieldUpdateArray
+from .models import PostgresFields, FieldUpdateNotNull, CustomField, FieldUpdateArray, TestCoverage
 from exampleapp.models import FieldUpdate, MultiSub, Child, Parent
 from psycopg2.extras import NumericRange, DateTimeTZRange, DateRange
 import datetime
@@ -776,32 +777,11 @@ ARRAY_SINGLES = {
         [None],
         [None, None],
         [None, random_uuid, random_uuid]
-    ],
-    'f_biginteger2': [],
-    'f_binary2': [],
-    'f_boolean2': [],
-    'f_char2': [],
-    'f_date2': [],
-    'f_datetime2': [],
-    'f_decimal2': [],
-    'f_duration2': [],
-    'f_email2': [],
-    'f_float2': [],
-    'f_integer2': [],
-    'f_ip2': [],
-    'f_json2': [],
-    'f_slug2': [],
-    'f_smallinteger2': [],
-    'f_text2': [],
-    'f_time2': [],
-    'f_url2': [],
-    'f_uuid2': [],
+    ]
 }
 
 
 class TestCopyUpdateArray(TestCase):
-    # TODO: test float NaN for arrays
-    # TODO: 2d tests
     def test_singles(self):
         for fieldname, values in ARRAY_SINGLES.items():
             for value in values:
@@ -814,6 +794,42 @@ class TestCopyUpdateArray(TestCase):
                 FieldUpdateArray.objects.copy_update([update_b], [fieldname])
                 res_a, res_b = FieldUpdateArray.objects.all().values(fieldname)
                 self.assertEqual(res_b[fieldname], res_a[fieldname])
+
+    def test_2d(self):
+        for fieldname, values in ARRAY_SINGLES.items():
+            fieldname += '2'
+            values = [[v, v] for v in values]
+            for value in values:
+                FieldUpdateArray.objects.all().delete()
+                a = FieldUpdateArray.objects.create()
+                b = FieldUpdateArray.objects.create()
+                update_a = FieldUpdateArray(pk=a.pk, **{fieldname: value})
+                update_b = FieldUpdateArray(pk=b.pk, **{fieldname: value})
+                FieldUpdateArray.objects.bulk_update([update_a], [fieldname])
+                FieldUpdateArray.objects.copy_update([update_b], [fieldname])
+                res_a, res_b = FieldUpdateArray.objects.all().values(fieldname)
+                self.assertEqual(res_b[fieldname], res_a[fieldname])
+
+    def test_float_nan(self):
+        a = FieldUpdateArray.objects.create()
+        b = FieldUpdateArray.objects.create()
+
+        # 1d
+        a.f_float = [float('nan'), -0.0001, float('-inf')]
+        b.f_float = [float('nan'), -0.0001, float('-inf')]
+        FieldUpdateArray.objects.bulk_update([a], ['f_float'])
+        FieldUpdateArray.objects.copy_update([b], ['f_float'])
+        self.assertEqual(isnan(FieldUpdateArray.objects.get(pk=a.pk).f_float[0]), True)
+        self.assertEqual(isnan(FieldUpdateArray.objects.get(pk=b.pk).f_float[0]), True)
+
+        # 2d
+        a.f_float2 = [[float('nan'), -0.0001], [-0.0001, float('nan')]]
+        b.f_float2 = [[float('nan'), -0.0001], [-0.0001, float('nan')]]
+        FieldUpdateArray.objects.bulk_update([a], ['f_float2'])
+        FieldUpdateArray.objects.copy_update([b], ['f_float2'])
+        self.assertEqual(isnan(FieldUpdateArray.objects.get(pk=a.pk).f_float2[1][1]), True)
+        self.assertEqual(isnan(FieldUpdateArray.objects.get(pk=b.pk).f_float2[1][1]), True)
+
 
 
 class TestCopyUpdateWickedText(TestCase):
@@ -973,6 +989,111 @@ class TestArrayEvaluation(TestCase):
         )
 
 
+class TestHstoreAndRangeArray(TestCase):
+    def test_hstore_array(self):
+        value = [
+            None,
+            {'a': '\\\\\\\\\\', '123': '{\'"@%%\t\n\\N', 'none': None},
+            {
+                'b"': '\tcomplicated "with quotes"',
+                'c': '\\N\n\\n{',
+                '': 'empty key',
+                'quotes': '" \\" \\\\"',
+                '€': 'ümläütß'
+            }
+        ]
+        a = TestCoverage.objects.create(
+            hstore={}, int_r=NumericRange(1,8), int_2d=[], hstore_2d=[], int_r_2d=[])
+        b = TestCoverage.objects.create(
+            hstore={}, int_r=NumericRange(1,8), int_2d=[], hstore_2d=[], int_r_2d=[])
+        
+        # 1d
+        a.hstore_2d = value
+        b.hstore_2d = value
+        TestCoverage.objects.bulk_update([a], ['hstore_2d'])
+        TestCoverage.objects.copy_update([b], ['hstore_2d'])
+        self.assertEqual(
+            TestCoverage.objects.get(pk=a.pk).hstore_2d,
+            TestCoverage.objects.get(pk=b.pk).hstore_2d
+        )
 
-# TODO: test hstore/range types with array...
-# TODO: document encoder interface
+        # 2d
+        a.hstore_2d = [value, value]
+        b.hstore_2d = [value, value]
+        TestCoverage.objects.bulk_update([a], ['hstore_2d'])
+        TestCoverage.objects.copy_update([b], ['hstore_2d'])
+        self.assertEqual(
+            TestCoverage.objects.get(pk=a.pk).hstore_2d,
+            TestCoverage.objects.get(pk=b.pk).hstore_2d
+        )
+
+
+    def test_range_array(self):
+        value = [NumericRange(1, 8), NumericRange(-55, 0), None]
+        a = TestCoverage.objects.create(
+            hstore={}, int_r=NumericRange(1,8), int_2d=[], hstore_2d=[], int_r_2d=[])
+        b = TestCoverage.objects.create(
+            hstore={}, int_r=NumericRange(1,8), int_2d=[], hstore_2d=[], int_r_2d=[])
+        
+        # 1d
+        a.int_r_2d = value
+        b.int_r_2d = value
+        TestCoverage.objects.bulk_update([a], ['int_r_2d'])
+        TestCoverage.objects.copy_update([b], ['int_r_2d'])
+        self.assertEqual(
+            TestCoverage.objects.get(pk=a.pk).int_r_2d,
+            TestCoverage.objects.get(pk=b.pk).int_r_2d
+        )
+
+        # 2d
+        a.int_r_2d = [value, value]
+        b.int_r_2d = [value, value]
+        TestCoverage.objects.bulk_update([a], ['int_r_2d'])
+        TestCoverage.objects.copy_update([b], ['int_r_2d'])
+        self.assertEqual(
+            TestCoverage.objects.get(pk=a.pk).int_r_2d,
+            TestCoverage.objects.get(pk=b.pk).int_r_2d
+        )
+
+    def test_range_array_notnull_raise(self):
+        a = TestCoverage.objects.create(
+            hstore={}, int_r=NumericRange(1,8), int_2d=[], hstore_2d=[], int_r_2d=[])
+        a.int_r_2d = None
+        self.assertRaisesMessage(
+            TypeError,
+            "expected type <class 'list'> or <class 'tuple'> for field \"int_r_2d\", got None",
+            lambda: TestCoverage.objects.copy_update([a], ['int_r_2d'])
+        )
+
+    def test_range_array_notlist_raise(self):
+        a = TestCoverage.objects.create(
+            hstore={}, int_r=NumericRange(1,8), int_2d=[], hstore_2d=[], int_r_2d=[])
+        a.int_r_2d = 123
+        self.assertRaisesMessage(
+            TypeError,
+            "expected type <class 'list'> or <class 'tuple'> for field \"int_r_2d\", got <class 'int'>",
+            lambda: TestCoverage.objects.copy_update([a], ['int_r_2d'])
+        )
+
+
+class TestBetterCoverage(TestCase):
+    # some test for so far omitted side paths
+    def test_hstore_notnull_raise(self):
+        a = TestCoverage.objects.create(
+            hstore={}, int_r=NumericRange(1,8), int_2d=[], hstore_2d=[], int_r_2d=[])
+        a.hstore = None
+        self.assertRaisesMessage(
+            TypeError,
+            'expected type <class \'dict\'> for field "hstore"',
+            lambda: TestCoverage.objects.copy_update([a], ['hstore'])
+        )
+
+    def test_range_notnull_raise(self):
+        a = TestCoverage.objects.create(
+            hstore={}, int_r=NumericRange(1,8), int_2d=[], hstore_2d=[], int_r_2d=[])
+        a.int_r = None
+        self.assertRaisesMessage(
+            TypeError,
+            'expected type <class \'int\'> for field "int_r"',
+            lambda: TestCoverage.objects.copy_update([a], ['int_r'])
+        )
