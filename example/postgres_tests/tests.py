@@ -726,7 +726,7 @@ ARRAY_SINGLES = {
             '': 'empty key',
             'different quotes': '" \\" \\\\"',
             '€': 'ümläütß'
-        }, None, 'plain string', (1,2,'\t\t')]    # NOTE: list type is reserved for array descent
+        }, None, 'plain string', (1,2,'\t\t')]
     ],
     'f_slug': [
         None,
@@ -918,21 +918,59 @@ class TestEncoderOverrides(TestCase):
         objB.f_float = ['-0,00001', 'inf']
 
         # write to db with custom encoder
-        field = FieldUpdateArray._meta.get_field('f_float')
         FieldUpdateArray.objects.copy_update(
             [objA, objB], ['f_float'],
-            field_encoders={'f_float': array_factory(field, self.base_encoder)}
+            field_encoders={'f_float': array_factory(self.base_encoder, 1, False)}
         )
         self.assertEqual(FieldUpdateArray.objects.get(pk=objA.pk).f_float, [1.2345, 666])
         self.assertEqual(FieldUpdateArray.objects.get(pk=objB.pk).f_float, [-0.00001, float('inf')])
 
 
+class TestArrayEvaluation(TestCase):
+    def test_empty_reduction(self):
+        a = FieldUpdateArray.objects.create()
+        b = FieldUpdateArray.objects.create()
 
+        # these all eval to empty array '{}' in ARRAY[] notation
+        values = [
+            [],
+            [[], None],
+            [[], [], None],
+        ]
+        for v in values:
+            a.f_integer2 = v
+            b.f_integer2 = v
+            FieldUpdateArray.objects.bulk_update([a], ['f_integer2'])
+            FieldUpdateArray.objects.copy_update([b], ['f_integer2'])
+            self.assertEqual(FieldUpdateArray.objects.get(pk=a.pk).f_integer2, [])
+            self.assertEqual(FieldUpdateArray.objects.get(pk=b.pk).f_integer2, [])
 
+    def test_unbalanced1(self):
+        a = FieldUpdateArray.objects.create()
+        a.f_integer2 = [[1,2], [3]]
+        self.assertRaisesMessage(
+            ValueError,
+            'multidimensional arrays must be balanced',
+            lambda: FieldUpdateArray.objects.copy_update([a], ['f_integer2'])
+        )
 
+    def test_unbalanced2(self):
+        a = FieldUpdateArray.objects.create()
+        a.f_integer2 = [1, 2, [3]]
+        self.assertRaisesMessage(
+            ValueError,
+            'multidimensional arrays must be balanced',
+            lambda: FieldUpdateArray.objects.copy_update([a], ['f_integer2'])
+        )
 
-
-
+    def test_unbalanced3(self):
+        a = FieldUpdateArray.objects.create()
+        a.f_integer2 = [None, [None]]
+        self.assertRaisesMessage(
+            ValueError,
+            'multidimensional arrays must be balanced',
+            lambda: FieldUpdateArray.objects.copy_update([a], ['f_integer2'])
+        )
 
 
 

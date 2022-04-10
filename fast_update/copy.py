@@ -401,38 +401,139 @@ def HStoreOrNone(v, fname, lazy):
 HStoreOrNone.array_escape = True
 
 
-def range_factory(_type):
+def range_factory(basetype, text_safe):
+    """
+    Factory for range type encoders.
+
+    The generated encoders always expect a psycopg2 ``Range`` type.
+    Additionally the encoders test, that the ``lower`` and ``upper`` values
+    set on the range object are of type ``basetype``.
+
+    ``text_safe`` indicates, whether the values convert safely into postgres'
+    TEXT format. This is the case for all range types defined from django,
+    but might not be true anymore for hand-crafted range types.
+
+    ``array_escape`` is always true for range types to avoid ambiguity
+    with array commas.
+
+    Returns a tuple of (Range, RangeOrNone) encoders.
+    """
     def encode_range(v, fname, lazy):
-        if isinstance(v, Range) and all(map(lambda e: isinstance(e, _type), (v.lower, v.upper))):
-            return v
-        raise TypeError(f'expected type {_type} for field "{fname}", got {type(v)}')
+        if isinstance(v, Range) and isinstance(v.lower, basetype) and isinstance(v.upper, basetype):
+            return v if text_safe else text_escape(str(v))
+        raise TypeError(f'expected type {basetype} for field "{fname}", got {type(v)}')
     encode_range.array_escape = True
     def encode_range_none(v, fname, lazy):
         if v is None:
             return NULL
-        if isinstance(v, Range) and all(map(lambda e: isinstance(e, _type), (v.lower, v.upper))):
-            return v
-        raise TypeError(f'expected type {_type} or None for field "{fname}", got {type(v)}')
+        if isinstance(v, Range) and isinstance(v.lower, basetype) and isinstance(v.upper, basetype):
+            return v if text_safe else text_escape(str(v))
+        raise TypeError(f'expected type {basetype} or None for field "{fname}", got {type(v)}')
     encode_range_none.array_escape = True
     return encode_range, encode_range_none
 
 
-# TODO: cache encoder for later calls?
-# NOTE: array descent only happens on lists (to allow tuples as json native)
-# FIXME: should we respect null field setting in dim descent?
-def array_factory(field, enc=None):
-    if not enc:
-        base = field.base_field
-        while isinstance(base, ArrayField):
-            base = base.base_field
-        enc = get_encoder(base)
+"""
+Edge cases with arrays:
+-   empty top level array works for both
+    select ARRAY[]::integer[];                  -->     {}
+    select '{}'::integer[];                     -->     {}
+
+-   nested empty sub arrays
+    select ARRAY[ARRAY[ARRAY[]]]::integer[];    -->     {}
+    select '{{{}}}'::integer[];                 -->     malformed array literal: "{{{}}}"
+    --> no direct aquivalent in text notation
+
+-   complicated mixture with null
+    select ARRAY[null,ARRAY[ARRAY[],null]]::integer[];      -->     {}
+    no direct aquivalent in text notation
+
+Is the ARRAY notation broken in postgres?
+
+Observations:
+- if all values are nullish + at least one empty sub array, enclosing array is set to empty (losing all inner info?)
+  --> cascades up to top level leaving an empty array {} with no dimension or inner info at all
+- if all values are nullish and there is no empty sub array, the values manifest as null with dimension set
+- ARRAY[] raises for unbalanced multidimension arrays, TEXT format returns nonsense syntax error
+
+The following 2 functions is_empty_array and is_balanced try to restore some of the ARRAY[] behavior.
+This happens to a rather high price of 2 additional deep scan of array values.
+A better implementation prolly could do that in one pass combined.
+"""
+def is_empty_array(v):
+    """
+    Special handling of nullish array values, that reduce to single {}.
+
+    This is purely taken from ARRAY[] behavioral observations,
+    thus might not cover all edge cases yet.
+    """
+    if v == []:
+        return True
+    if all((is_empty_array(e) if isinstance(e, (list, tuple)) else e is None) for e in v):
+        if all(e is None for e in v):
+            return False
+        return True
+    return False
+
+
+def _balanced(v, depth, dim=0):
+    if not isinstance(v, (list, tuple)) or dim>=depth:
+        return
+    return tuple(_balanced(e, depth, dim+1) for e in v)
+
+def is_balanced(v, depth):
+    """
+    Check if array value is balanced over multiple dimensions.
+    """
+    return len(set(_balanced(v, depth))) < 2
+
+
+def array_factory(encoder, depth=1, null=False):
+    """
+    Factory for array value encoder.
+
+    The returned encoder tries to mimick ArrayField.get_db_prep_value + ARRAY[] conditions
+    as close as possible:
+    - allow array descent up to ``depth`` (get_db_prep_value restriction, postgres doesn't care)
+    - final values may occur at any level up to depth
+    - null setting respected at top level, always allowed in sub arrays
+    - empty_array reduction (ARRAY[] behavior, see is_empty_array)
+    - explicit balance chck in python (normally done in ARRAY, but not available in TEXT format)
+    - array descent on types list and tuple
+
+    ``encoder`` denotes the final type encoder to be applied.
+    ``depth`` is the max array dimensions, the encoder will try to descend into subarrays.
+    ``null`` denotes whether the encoder should allow None at top level.
+    """
     def encode_array(v, fname, lazy, dim=0):
+        if not dim:
+            # handle top level separately, as it differs for certain aspects:
+            # - null respected (postgres always allows null in nested arrays)
+            # - need to check whether value reduces to empty array {}
+            # - balance check
+            if v is None:
+                if null:
+                    return NULL
+                raise TypeError(f'expected type {list} or {tuple} for field "{fname}", got None')
+            if is_empty_array(v):
+                return '{}'
+            if isinstance(v, (list, tuple)):
+                # other than bulk_update we have to do the balance check in python to get
+                # a meaningful error, as postgres throws only an unspecific syntax error
+                if depth > 1 and not is_balanced(v, depth):
+                    raise ValueError(f'multidimensional arrays must be balanced, got {v}')
+                return f'{{{",".join(encode_array(e, fname, lazy, dim+1) for e in v)}}}'
+            raise TypeError(f'expected type {list}, {tuple} or None for field "{fname}", got {type(v)}')
         if v is None:
-            return SQL_NULL if dim else NULL
-        if isinstance(v, (list,)):
+            return SQL_NULL
+        if isinstance(v, (list, tuple)) and dim < depth:
+            # multi dim arrays descent
             return f'{{{",".join(encode_array(e, fname, lazy, dim+1) for e in v)}}}'
-        final = str(enc(v, fname, lazy))
-        return array_escape(final) if enc.array_escape else final
+        # fall-though to value encoding:
+        # - any non list|tuple type
+        # - always at bottom (dim==depth)
+        final = str(encoder(v, fname, lazy))
+        return array_escape(final) if encoder.array_escape else final
     return encode_array
 
 
@@ -467,11 +568,11 @@ ENCODERS = {
     models.UUIDField: (Uuid, UuidOrNone),
     # postgres specific fields
     HStoreField: (HStore, HStoreOrNone),
-    IntegerRangeField: range_factory(int),
-    BigIntegerRangeField: range_factory(int),
-    DecimalRangeField: range_factory(Decimal),
-    DateTimeRangeField: range_factory(datetime),
-    DateRangeField: range_factory(date),
+    IntegerRangeField: range_factory(int, True),
+    BigIntegerRangeField: range_factory(int, True),
+    DecimalRangeField: range_factory(Decimal, True),
+    DateTimeRangeField: range_factory(datetime, True),
+    DateRangeField: range_factory(date, True),
     # ArrayField: handled by array_factory(field) in get_encoder
 }
 
@@ -496,8 +597,13 @@ def get_encoder(field, null=None):
     if field.is_relation:
         return get_encoder(field.target_field, null)
     if isinstance(field, ArrayField):
-        # FIXME: null handling for arrays
-        return array_factory(field)
+        # TODO: cache array encoder for later calls?
+        base = field.base_field
+        depth = 1
+        while isinstance(base, ArrayField):
+            base = base.base_field
+            depth += 1
+        return array_factory(get_encoder(base), depth, null)
     for cls in type(field).__mro__:
         enc = ENCODERS.get(cls)
         if enc:
@@ -630,10 +736,8 @@ def copy_update(
     attnames, colnames, column_def = zip(*[
         (f.attname, f.column, (f.column, f.db_type(conn)))
             for f in all_fields])
-    if field_encoders:
-        encs = [field_encoders.get(f.attname, get_encoder(f)) for f in all_fields]
-    else:
-        encs = [get_encoder(f) for f in all_fields]
+    encs = ([field_encoders.get(f.attname, get_encoder(f)) for f in all_fields]
+        if field_encoders else [get_encoder(f) for f in all_fields])
     get = attrgetter(*attnames)
     rows_updated = 0
     with transaction.atomic(using=conn.alias, savepoint=False), conn.cursor() as c:
