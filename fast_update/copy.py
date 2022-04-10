@@ -15,7 +15,6 @@ from psycopg2.extras import Range
 
 
 # TODO: typings, docs cleanup
-# TODO: import guard in query.py
 # TODO: document encoder interface
 
 

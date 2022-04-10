@@ -4,7 +4,6 @@ from django.db.utils import NotSupportedError
 from typing import Any, Dict, Optional, Sequence
 
 from .fast import fast_update
-from .copy import copy_update
 
 
 def sanity_check(model, objs, fields, batch_size):
@@ -65,6 +64,7 @@ class FastUpdateQuerySet(QuerySet):
         if connection.vendor != 'postgresql':
             raise NotSupportedError(
                 f'copy_update() is not supported on "{connection.vendor}" backend')
+        from .copy import copy_update
         objs = tuple(objs)
         fields = set(fields or [])
         sanity_check(self.model, objs, fields, 123)
