@@ -6,12 +6,9 @@
 
 Faster db updates using `UPDATE FROM VALUES` sql variants.
 
-### fast_update ###
+### Installation & Usage ###
 
-`fast_update` is meant to be used as `bulk_update` replacement.
-
-
-#### Example Usage ####
+Run `pip install django-fast-update` and place `fast_update` in INSTALLED_APPS.
 
 With attaching `FastUpdateManager` as a manager to your model, `fast_update`
 can be used instead of `bulk_update`, e.g.:
@@ -31,14 +28,22 @@ class MyModel(models.Model):
 MyModel.objects.fast_update(bunch_of_instances, ['field_a', 'field_b', 'field_c'])
 ```
 
+Alternatively `fast.fast_update` can be used directly with a queryset as first argument
+(Warning - this skips most sanity checks with up to 30% speed gain,
+but make sure not to feed something totally off).
 
-#### Compatibility ####
 
-`fast_update` is implemented for these database backends:
+### Compatibility ###
+
+The way `fast_update` is implemented by UPDATE FROM VALUES variants, makes it
+dependent on recent database backends. It is currently implemented for:
+
 - SQLite 3.33+
 - PostgreSQL
 - MariaDB 10.3.3+
 - MySQL 8.0.19+
+
+For unsupported database backends or outdated versions `fast_update` will fall back to `bulk_update`.
 
 Note that with `fast_update` f-expressions cannot be used anymore.
 This is a design decision to not penalize update performance by some swiss-army-knife functionality.
@@ -49,24 +54,28 @@ fields with `update` or `bulk_update` instead.
 ### copy_update ###
 
 This is a PostgreSQL only update implementation based on `COPY FROM`. This runs even faster
-than `fast_update` for medium to big changesets.
+than `fast_update` for medium to big changesets (but tends to be slower than `fast_update` for <100 objects).
 
-Note that this will probably never leave the alpha/PoC-state, as psycopg3 brings great COPY support,
-which does a more secure value conversion and even runs faster in the C-version.
+`copy_update` follows the same interface idea as `bulk_update` and `fast_update`, minus a `batch_size`
+argument (data is always transferred in one big batch). It can be used likewise from the `FastUpdateManager`.
+`copy_update` also has no support for f-expressions.
 
-TODO - describe usage and limitations...
+**Note** `copy_update` will probably never leave the alpha/PoC-state, as psycopg3 brings great COPY support,
+which does a more secure value conversion and has a very fast C-version.
 
 
 ### Status ###
 
-Currently alpha, left to do:
-- finish `copy_update` (array null cascading, some tests)
-- some better docs
+Currently beta, still some TODOs left (including better docs).
+
+The whole package is tested with Django 3.2 & 4.0 on Python 3.8 & 3.10.
 
 
 ### Performance ###
 
-There is a management command in the example app testing performance of updates on the `FieldUpdate` model.
+There is a management command in the example app testing performance of updates on the `FieldUpdate`
+model (`./manange.py perf`).
+
 Here are some numbers from my laptop (tested with `settings.DEBUG=False`,
 db engines freshly bootstrapped from docker as mentioned in `settings.py`):
 

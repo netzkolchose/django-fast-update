@@ -1,4 +1,4 @@
-from weakref import WeakKeyDictionary
+from weakref import WeakKeyDictionary, ReferenceType
 from django.db import transaction, models, connections
 from django.db.utils import ProgrammingError
 from django.db.models.functions import Cast
@@ -8,7 +8,7 @@ import logging
 
 # typing imports
 from django.db.models import Field
-from typing import List, Optional, Sequence, Any, Union
+from typing import Dict, Iterable, List, Optional, Sequence, Any, Union, cast
 from django.db.models.sql.compiler import SQLCompiler
 from django.db.backends.utils import CursorWrapper
 from django.db.backends.base.base import BaseDatabaseWrapper
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 # memorize fast_update vendor on connection object
-SEEN_CONNECTIONS = WeakKeyDictionary()
+SEEN_CONNECTIONS = cast(Dict[BaseDatabaseWrapper, str], WeakKeyDictionary())
 
 
 def get_vendor(conn: BaseDatabaseWrapper) -> str:
@@ -40,7 +40,8 @@ def get_vendor(conn: BaseDatabaseWrapper) -> str:
         return 'postgresql'
 
     if conn.vendor == 'sqlite':
-        major, minor, _ = conn.Database.sqlite_version_info
+        _conn = cast(Any, conn)
+        major, minor, _ = _conn.Database.sqlite_version_info
         if (major == 3 and minor > 32) or major > 3:
             SEEN_CONNECTIONS[conn] = 'sqlite'
             return 'sqlite'
@@ -74,7 +75,7 @@ def get_vendor(conn: BaseDatabaseWrapper) -> str:
 
 def pq_cast(tname: str, field: Field, compiler: SQLCompiler, connection: Any) -> str:
     """Column type cast for postgres."""
-    # FIXME: compare to as_postgresql in v4
+    # TODO: compare to as_postgresql in v4
     return Cast(Col(tname, field), output_field=field).as_sql(compiler, connection)[0]
 
 
@@ -232,7 +233,7 @@ def update_from_values(
 def fast_update(
     qs: models.QuerySet,
     objs: Sequence[models.Model],
-    fieldnames: Sequence[str],
+    fieldnames: Iterable[str],
     batch_size: Union[int, None]
 ) -> int:
     qs._for_write = True
@@ -258,7 +259,7 @@ def fast_update(
     
     # prepare all needed arguments for update
     max_batch_size = conn.ops.bulk_batch_size(['pk'] + local_fieldnames, objs)
-    batch_size = min(batch_size or 2 ** 31, max_batch_size)
+    batch_size_adjusted = min(batch_size or 2 ** 31, max_batch_size)
     fields = [model._meta.get_field(f) for f in local_fieldnames]
     pk_field = model._meta.pk
     get = attrgetter(pk_field.attname, *(f.attname for f in fields))
@@ -274,7 +275,7 @@ def fast_update(
             for o in objs:
                 counter += 1
                 data += [p(v, conn) for p, v in zip(prep_save, get(o))]
-                if counter >= batch_size:
+                if counter >= batch_size_adjusted:
                     rows_updated += update_from_values(
                         c, vendor, model._meta.db_table, pk_field, fields,
                         counter, data, compiler, conn
