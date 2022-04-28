@@ -139,20 +139,24 @@ def as_sqlite_cte(
     connection: BaseDatabaseWrapper
 ) -> str:
     """
-    sqlite >= 3.15 < 3.32 does not support yet the FROM VALUES pattern, but has CTE support,
-    which we can use to build the join table upfront with UNION ALL.
+    sqlite >=3.15 <3.33 does not support yet the FROM VALUES pattern, but has
+    CTE support (>=3.8) with row assignment in UPDATE (>=3.15).
+    So we can use CTE to construct the values table upfront with UNION ALL,
+    and do row level update in the SET clause.
 
     To limit the updated rows we normally would do a correlated existance test
     in the update WHERE clause:
 
-        WHERE EXISTS (SELECT 1 FROM target_table WHERE target_table.pk = value_table.pk)
+        WHERE EXISTS (SELECT 1 FROM target WHERE target.pk = cte.pk)
 
-    but this shows very bad performance due to rescanning the unindexed values table.
-    We can achieve the same filter condition by providing the pks with an IN test:
+    but this shows very bad performance due to repeated rescanning of the
+    values table. We can achieve the same filter condition by providing
+    the pks with an IN test:
 
-        WHERE target_table.pk in (pk1, pk2, ...)
+        WHERE target.pk in (pk1, pk2, ...)
 
-    This sacrifices some bandwidth, but is only ~40% slower than the FROM VALUES join.
+    This sacrifices some bandwidth, but is only ~40% slower than the
+    FROM VALUES table join.
     """
     # TODO: needs proper field names escaping
     # FIXME: CTE pattern does not set rowcount correctly, needs patch in update_from_values
