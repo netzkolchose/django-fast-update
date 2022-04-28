@@ -65,10 +65,9 @@ def get_vendor(conn: BaseDatabaseWrapper) -> str:
                 c.execute("SELECT column_1 FROM (VALUES ROW(1, 'zzz'), ROW(2, 'yyy')) as foo")
             SEEN_CONNECTIONS[conn] = 'mysql8'
             return 'mysql8'
-        except ProgrammingError:  # pragma: no cover
-            logger.warning('unsupported mysql backend, fast_update will fall back to bulk_update')
-            SEEN_CONNECTIONS[conn] = ''
-            return ''
+        except ProgrammingError:
+            SEEN_CONNECTIONS[conn] = 'mysql_old'
+            return 'mysql_old'
 
     logger.warning('unsupported db backend, fast_update will fall back to bulk_update')
     SEEN_CONNECTIONS[conn] = ''
@@ -161,6 +160,7 @@ def as_sqlite_cte(
     # TODO: needs proper field names escaping
     # FIXME: CTE pattern does not set rowcount correctly, needs patch in update_from_values
     # FIXME: pk values in where need placeholder calc
+    # FIXME: dont use pk as fixed col name, proper escape of col names
     dname = 'd' if tname != 'd' else 'c'
     cols = ', '.join([f.column for f in fields])
     values = ' UNION ALL '.join([' SELECT ' + row[1:-1] for row in rows])
@@ -227,13 +227,35 @@ def as_mysql8(
     on = f'`{tname}`.`{pkname}` = {dname}.column_0'
     return f'UPDATE `{tname}` INNER JOIN (VALUES {values}) AS {dname} ON {on} SET {cols}'
 
-# possible scheme for older mysql 5.7
-# UPDATE ttt,
-#   (SELECT 1 AS num, 'one' AS letter, 'a' as hmm
-#   UNION ALL SELECT 2, 'two', 'b'
-#   UNION ALL SELECT 3, 'three', 'c') temp
-# SET ttt.t1 = temp.letter, ttt.t2 = temp.hmm
-# WHERE ttt.n = temp.num;
+
+def as_mysql_old(
+    tname: str,
+    pkname: str,
+    fields: Sequence[Field],
+    rows: List[str],
+    count: int,
+    compiler: SQLCompiler,
+    connection: BaseDatabaseWrapper
+) -> str:
+    """
+    Workaround for older MySQL (<8.0) and MariaDB (<10.3) versions.
+    """
+    # FIXME: better first values calc
+    # FIXME: this dies much earlier from mysql stack limit?
+    # TODO: test MariaDB 10.2
+    # TODO: Is this better than using half broken TVC in MariaDB 10.3+?
+    dname = 'd' if tname != 'd' else 'c'
+    cols = ','.join(f'`{tname}`.`{f.column}`=`{dname}`.`{f.column}`' for f in fields)
+    colnames = [pkname] + [f.column for f in fields]
+    first = ' SELECT ' + ', '.join([f'{ph} AS `{colname}`' for ph, colname in zip(rows[0][1:-1].split(','), colnames)])
+    later = ' UNION ALL '.join([' SELECT ' + row[1:-1] for row in rows[1:]])
+    values = f'{first} UNION ALL {later}' if later else first
+    where = f'`{tname}`.`{pkname}` = `{dname}`.`{pkname}`'
+    return (
+        f'UPDATE `{tname}`, ({values}) {dname} '
+        f'SET {cols} WHERE {where}'
+    )
+
 
 # possible scheme for oracle 21
 # UPDATE (SELECT taa.n n,
@@ -283,7 +305,8 @@ QUERY = {
     'sqlite_cte': as_sqlite_cte,
     'postgresql': as_postgresql,
     'mysql': as_mysql,
-    'mysql8': as_mysql8
+    'mysql8': as_mysql8,
+    'mysql_old': as_mysql_old
 }
 
 
