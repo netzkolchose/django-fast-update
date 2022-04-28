@@ -41,10 +41,12 @@ def get_vendor(conn: BaseDatabaseWrapper) -> str:
 
     if conn.vendor == 'sqlite':
         _conn = cast(Any, conn)
-        major, minor, _ = _conn.Database.sqlite_version_info
-        if (major == 3 and minor > 32) or major > 3:
+        if _conn.Database.sqlite_version_info >= (3, 33):
             SEEN_CONNECTIONS[conn] = 'sqlite'
             return 'sqlite'
+        elif _conn.Database.sqlite_version_info >= (3, 15):
+            SEEN_CONNECTIONS[conn] = 'sqlite_cte'
+            return 'sqlite_cte'
         else:  # pragma: no cover
             logger.warning('unsupported sqlite backend, fast_update will fall back to bulk_update')
             SEEN_CONNECTIONS[conn] = ''
@@ -127,6 +129,46 @@ def as_sqlite(
     return f'UPDATE "{tname}" SET {cols} FROM (VALUES {values}) AS "{dname}" WHERE {where}'
 
 
+def as_sqlite_cte(
+    tname: str,
+    pkname: str,
+    fields: Sequence[Field],
+    rows: List[str],
+    count: int,
+    compiler: SQLCompiler,
+    connection: BaseDatabaseWrapper
+) -> str:
+    """
+    sqlite >= 3.15 < 3.32 does not support yet the FROM VALUES pattern, but has CTE support,
+    which we can use to build the join table upfront with UNION ALL.
+
+    To limit the updated rows we normally would do a correlated existance test
+    in the update WHERE clause:
+
+        WHERE EXISTS (SELECT 1 FROM target_table WHERE target_table.pk = value_table.pk)
+
+    but this shows very bad performance due to rescanning the unindexed values table.
+    We can achieve the same filter condition by providing the pks with an IN test:
+
+        WHERE target_table.pk in (pk1, pk2, ...)
+
+    This sacrifices some bandwidth, but is only ~40% slower than the FROM VALUES join.
+    """
+    # TODO: needs proper field names escaping
+    # FIXME: CTE pattern does not set rowcount correctly, needs patch in update_from_values
+    # FIXME: pk values in where need placeholder calc
+    dname = 'd' if tname != 'd' else 'c'
+    cols = ', '.join([f.column for f in fields])
+    values = ' UNION ALL '.join([' SELECT ' + row[1:-1] for row in rows])
+    where = f'"{tname}"."{pkname}"={dname}.pk'
+    return (
+        f'WITH {dname}(pk, {cols}) AS ({values}) '
+        f'UPDATE "{tname}" '
+        f'SET ({cols}) = (SELECT {cols} FROM {dname} WHERE {where}) '
+        f'WHERE "{tname}"."{pkname}" in ({",".join(["%s"]*count)})'
+    )
+
+
 def as_mysql(
     tname: str,
     pkname: str,
@@ -181,10 +223,60 @@ def as_mysql8(
     on = f'`{tname}`.`{pkname}` = {dname}.column_0'
     return f'UPDATE `{tname}` INNER JOIN (VALUES {values}) AS {dname} ON {on} SET {cols}'
 
+# possible scheme for older mysql 5.7
+# UPDATE ttt,
+#   (SELECT 1 AS num, 'one' AS letter, 'a' as hmm
+#   UNION ALL SELECT 2, 'two', 'b'
+#   UNION ALL SELECT 3, 'three', 'c') temp
+# SET ttt.t1 = temp.letter, ttt.t2 = temp.hmm
+# WHERE ttt.n = temp.num;
+
+# possible scheme for oracle 21
+# UPDATE (SELECT taa.n n,
+#                taa.t1 tt1,
+#                taa.t2 tt2,
+#                ta1.num num,
+#                ta1.letter letter,
+#                ta1.hmm hmm
+#           FROM ttt taa,
+#           (SELECT 1 AS num, 'one' AS letter, 'a' as hmm FROM dual
+# UNION ALL SELECT 2, 'two', 'b'   FROM dual
+# UNION ALL SELECT 3, 'three', 'c' FROM dual) ta1
+#          WHERE num = n)
+#    SET tt1 = letter,
+#        tt2 = hmm
+
+# possible scheme for oracle 18+
+# unclear: bad runtime due to subquery re-eval?
+# UPDATE ttt ta1
+#    SET (t1, t2) = (SELECT ta2.letter, ta2.hmm FROM (SELECT 1 AS num, 'one' AS letter, 'a' as hmm FROM dual
+# UNION ALL SELECT 2, 'two', 'b'   FROM dual
+# UNION ALL SELECT 3, 'three', 'c' FROM dual) ta2
+# WHERE ta1.n = ta2.num)
+# WHERE ta1.n in (1,2,3);
+
+# more elegant with own type in oracle?
+# create type t as object (a varchar2(10), b varchar2(10), c number);
+# create type tt as table of t;
+# select * from table( tt (
+#     t('APPLE', 'FRUIT', 1),
+#     t('APPLE', 'FRUIT', 1122),
+#     t('CARROT', 'VEGGIExxxxxxxxxxx', 3),
+#     t('PEACH', 'FRUIT', 104),
+#     t('CUCUMBER', 'VEGGIE', 5),
+#     t('ORANGE', 'FRUIT', 6) ) );
+
+# possible scheme for MSSQL 2014+
+# UPDATE ttt
+# SET ttt.t1 = temp.v
+# FROM (VALUES (1, 'bla'), (2, 'gurr'), (1, 'xxx')) temp(pk, v)
+# WHERE ttt.n = temp.pk;
+
 
 # TODO: Make is pluggable for other vendors? (also support check)
 QUERY = {
     'sqlite': as_sqlite,
+    'sqlite_cte': as_sqlite_cte,
     'postgresql': as_postgresql,
     'mysql': as_mysql,
     'mysql8': as_mysql8
@@ -221,11 +313,15 @@ def update_from_values(
         ] if hasattr(f, 'get_placeholder') else default_placeholder)
         for pos, f in enumerate(row_fields)
     ]
-    rows = [f'({",".join(row)})' for row in zip(*col_placeholders)]
+    # FIXME: remove paranthesis here, apply late in query functions instead
+    rows = [f'({", ".join(row)})' for row in zip(*col_placeholders)]
     sql = QUERY[vendor](tname, pk_field.column, fields, rows, counter, compiler, connection)
     if vendor == 'mysql':
         # mysql only: prepend (0,1,2,...) as first row
         data = list(range(len(fields) + 1)) + data
+    elif vendor == 'sqlite_cte':
+        # append pks a second time for faster WHERE IN narrowing in CTE variant
+        data += [data[i] for i in range(0, len(data), row_length)]
     c.execute(sql, data)
     return c.rowcount
 
