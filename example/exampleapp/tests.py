@@ -303,3 +303,39 @@ class TestSanityChecks(TestCase):
             'fast_update() cannot be used with primary key fields.',
             lambda : FieldUpdate.objects.fast_update(self.instances, ['f_char', 'id'])
         )
+
+
+class TestFilterDuplicates(TestCase):
+    def test_apply_first_duplicate_only(self):
+        a = FieldUpdate.objects.create()
+        updated = FieldUpdate.objects.fast_update([
+            FieldUpdate(pk=a.pk, **EXAMPLE),    # all values are trueish
+            FieldUpdate(pk=a.pk)                # all values None
+        ], FIELDS)
+        # only 1 row updated
+        self.assertEqual(updated, 1)
+        v = FieldUpdate.objects.all().values().first()
+        # all values should be trueish
+        self.assertEqual(all(e for e in v.values()), True)
+
+    def test_multiple_duplicates(self):
+        a = FieldUpdate.objects.create()
+        b = FieldUpdate.objects.create()
+        c = FieldUpdate.objects.create()
+        updated = FieldUpdate.objects.fast_update([
+            FieldUpdate(pk=a.pk, **EXAMPLE),    # all values are trueish
+            FieldUpdate(pk=a.pk),               # all values None
+            FieldUpdate(pk=a.pk),
+            FieldUpdate(pk=b.pk, **EXAMPLE),    # all values are trueish
+            FieldUpdate(pk=a.pk),
+            FieldUpdate(pk=a.pk),
+            FieldUpdate(pk=b.pk),
+            FieldUpdate(pk=c.pk, **EXAMPLE)     # all values are trueish
+        ], FIELDS)
+        # 3 row updated
+        self.assertEqual(updated, 3)
+        v = list(FieldUpdate.objects.all().values())
+        # all values should be trueish
+        self.assertEqual(all(e for e in v[0].values()), True)
+        self.assertEqual(all(e for e in v[1].values()), True)
+        self.assertEqual(all(e for e in v[2].values()), True)
