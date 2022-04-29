@@ -35,15 +35,16 @@ but make sure not to feed something totally off).
 
 ### Compatibility ###
 
-The way `fast_update` is implemented by UPDATE FROM VALUES variants, makes it
-dependent on recent database backends. It is currently implemented for:
+`fast_update` is known to work with these database versions:
 
-- SQLite 3.33+
+- SQLite 3.15+
 - PostgreSQL
-- MariaDB 10.3.3+
-- MySQL 8.0.19+
+- MariaDB 10.2+
+- MySQL 5.7+
 
 For unsupported database backends or outdated versions `fast_update` will fall back to `bulk_update`.
+(It is possible to register fast update implementations for other db vendors with `register_implementation`.
+Plz see `fast_update/fast.py` for more details.)
 
 Note that with `fast_update` f-expressions cannot be used anymore.
 This is a design decision to not penalize update performance by some swiss-army-knife functionality.
