@@ -17,9 +17,9 @@ DB vendor low level interfaces
 
 To register a fast update implementations, call:
 
-    register_implementation('alias', check_function)
+    register_implementation('vendor', check_function)
 
-where `alias` is the vendor name as returned by `connection.vendor`.
+where `vendor` is the vendor name as returned by `connection.vendor`.
 The check function gets called once (lazy) with `connection` and is meant
 to find a suitable implementation (you can provide multiple for different
 server versions), either actively by probing against the db server,
@@ -75,19 +75,19 @@ SEEN_CONNECTIONS = cast(Dict[BaseDatabaseWrapper, str], WeakKeyDictionary())
 CHECKER = {}
 
 def register_implementation(
-    alias: str,
+    vendor: str,
     func: Callable[[BaseDatabaseWrapper], Tuple[Any]]
 ) -> None:
     """
     Register fast update implementation for db vendor.
 
-    `alias` is the vendor name as returned by `connection.vendor`.
+    `vendor` is the vendor name as returned by `connection.vendor`.
     `func` is a lazy called function to check support for a certain
     implementation at runtime for `connection`. The function should return
     a tuple of (create_sql, prepare_data | None) for supported backends,
     otherwise an empty tuple (needed to avoid re-eval).
     """
-    CHECKER[alias] = func
+    CHECKER[vendor] = func
 
 
 def get_impl(conn: BaseDatabaseWrapper) -> str:
@@ -344,9 +344,14 @@ def fast_update(
         with conn.cursor() as c:
             data = []
             counter = 0
+            seen = set()
             for o in objs:
-                counter += 1
-                data += [p(v, conn) for p, v in zip(prep_save, get(o))]
+                row = [p(v, conn) for p, v in zip(prep_save, get(o))]
+                # filter for first batch occurence
+                if row[0] not in seen:
+                    counter += 1
+                    data += row
+                    seen.add(row[0])
                 if counter >= batch_size_adjusted:
                     rows_updated += update_from_values(
                         c, model._meta.db_table, pk_field, fields,
@@ -354,6 +359,7 @@ def fast_update(
                     )
                     data = []
                     counter = 0
+                    seen = set()
             if data:
                 rows_updated += update_from_values(
                     c, model._meta.db_table, pk_field, fields,
