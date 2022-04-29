@@ -1,6 +1,5 @@
-from weakref import WeakKeyDictionary, ReferenceType
+from weakref import WeakKeyDictionary
 from django.db import transaction, models, connections
-from django.db.utils import ProgrammingError
 from django.db.models.functions import Cast
 from django.db.models.expressions import Col
 from operator import attrgetter
@@ -8,7 +7,7 @@ import logging
 
 # typing imports
 from django.db.models import Field
-from typing import Dict, Iterable, List, Optional, Sequence, Any, Union, cast
+from typing import Callable, Dict, Iterable, List, Sequence, Any, Tuple, Union, cast
 from django.db.models.sql.compiler import SQLCompiler
 from django.db.backends.utils import CursorWrapper
 from django.db.backends.base.base import BaseDatabaseWrapper
@@ -17,61 +16,102 @@ from django.db.backends.base.base import BaseDatabaseWrapper
 logger = logging.getLogger(__name__)
 
 
+"""
+DB vendor low level interfaces
+
+create_sql function:
+
+    def as_sql_xy(
+        tname: str,
+        pkname: str,
+        fields: Sequence[Field],
+        placeholders: List[str],
+        compiler: SQLCompiler,
+        connection: BaseDatabaseWrapper
+    ) -> str: ...
+
+    `tname` - name of the target table as pulled from the ORM
+    `pkname` - name of the pk field (always the first in a row)
+    `fields` - ordered fields as occuring in the data after pk
+    `placeholders` - [col][row] placeholders (transposed)
+    `compiler` - current update compiler
+    `connection` - current write connection
+
+    The placeholders are already enriched from .get_placeholder.
+    They come transposed (column based), thus most likely need to be
+    transposed back into row based for sql templating.
+    The SQL function should return an SQL template with proper placeholders
+    applied to do the update from the prepared data list.
+
+prepare_data function:
+
+    def prepare_data_xy(
+        data: List[Any],
+        width: int,
+        height: int
+    ) -> List[Any]: ...
+
+    `data` - flat 1-d data list (all values prepared for save)
+    `width` - row width
+    `height` - column height
+
+    This function is meant to customize the data list, in case more than
+    the flat data table preparation is needed. The data is row based,
+    and contains field values in [pk] + fields order.
+    Return the altered data listing according to the SQL needs.
+
+To register a fast update implementations, call:
+
+    register_implementation('alias', check_function)
+
+where `alias` is the vendor name as returned by `connection.vendor`.
+The check function gets called once (lazy) with `connection` and is meant
+to find a suitable implementation (you can provide multiple for different
+server versions, if needed), either actively by probing against
+the db server, or directly if it can be determined upfront.
+The check function must return a tuple of (create_sql, prepare_data | None)
+for supported backends, or an empty tuple, if the backend is unsupported.
+"""
+
+
 # memorize fast_update vendor on connection object
 SEEN_CONNECTIONS = cast(Dict[BaseDatabaseWrapper, str], WeakKeyDictionary())
+CHECKER = {}
 
-
-def get_vendor(conn: BaseDatabaseWrapper) -> str:
+def register_implementation(
+    alias: str,
+    func: Callable[[BaseDatabaseWrapper], Tuple[Any]]
+) -> None:
     """
-    Get vendor name for fast_update implementation, or empty string.
+    Register fast update implementation for db vendor.
 
-    Due to differences in mariadb/mysql8 we cannot rely only on
-    django's connection.vendor differentiation, but have to
-    distinguish between 'mysql' (recent mariadb) and 'mysql8'.
-    Returns empty string for unknown/unsupported db backends,
-    on which fast_update will fall back to bulk_update.
+    `alias` is the vendor name as returned by `connection.vendor`.
+    `func` is a lazy called function to check support for a certain
+    implementation at runtime for `connection`. The function should return
+    a tuple of (create_sql, prepare_data | None) for supported backends,
+    otherwise an empty tuple (needed to avoid re-eval).
     """
-    vendor = SEEN_CONNECTIONS.get(conn)
-    if vendor is not None:
-        return vendor
+    CHECKER[alias] = func
 
-    if conn.vendor == 'postgresql':
-        SEEN_CONNECTIONS[conn] = 'postgresql'
-        return 'postgresql'
 
-    if conn.vendor == 'sqlite':
-        _conn = cast(Any, conn)
-        if _conn.Database.sqlite_version_info >= (3, 33):
-            SEEN_CONNECTIONS[conn] = 'sqlite'
-            return 'sqlite'
-        elif _conn.Database.sqlite_version_info >= (3, 15):
-            SEEN_CONNECTIONS[conn] = 'sqlite_cte'
-            return 'sqlite_cte'
-        else:  # pragma: no cover
-            logger.warning('unsupported sqlite backend, fast_update will fall back to bulk_update')
-            SEEN_CONNECTIONS[conn] = ''
-            return ''
-
-    if conn.vendor == 'mysql':
-        try:
-            with transaction.atomic(using=conn.alias), conn.cursor() as c:
-                c.execute("SELECT foo.0 FROM (VALUES (0, 1), (1, 'zzz'),(2, 'yyy')) as foo")
-            SEEN_CONNECTIONS[conn] = 'mysql'
-            return 'mysql'
-        except ProgrammingError:
-            pass
-        try:
-            with transaction.atomic(using=conn.alias), conn.cursor() as c:
-                c.execute("SELECT column_1 FROM (VALUES ROW(1, 'zzz'), ROW(2, 'yyy')) as foo")
-            SEEN_CONNECTIONS[conn] = 'mysql8'
-            return 'mysql8'
-        except ProgrammingError:
-            SEEN_CONNECTIONS[conn] = 'mysql_old'
-            return 'mysql_old'
-
-    logger.warning('unsupported db backend, fast_update will fall back to bulk_update')
-    SEEN_CONNECTIONS[conn] = ''
-    return ''
+def get_impl(conn: BaseDatabaseWrapper) -> str:
+    """
+    Try to get a fast update implementation for `conn`.
+    Calls once the the check function of `register_implementation` and
+    memorizes its result for `conn`.
+    Returns a tuple (create_sql, prepare_data | None) for supported backends,
+    otherwise an empty tuple.
+    """
+    impl = SEEN_CONNECTIONS.get(conn)
+    if impl is not None:
+        return impl
+    check = CHECKER.get(conn.vendor)
+    if not check:
+        SEEN_CONNECTIONS[conn] = tuple()
+        return tuple()
+    impl = check(conn)
+    SEEN_CONNECTIONS[conn] = impl
+    return impl
 
 
 def pq_cast(tname: str, field: Field, compiler: SQLCompiler, connection: Any) -> str:
@@ -84,8 +124,7 @@ def as_postgresql(
     tname: str,
     pkname: str,
     fields: Sequence[Field],
-    rows: List[str],
-    count: int,
+    placeholders: List[str],
     compiler: SQLCompiler,
     connection: BaseDatabaseWrapper
 ) -> str:
@@ -97,7 +136,7 @@ def as_postgresql(
     """
     dname = 'd' if tname != 'd' else 'c'
     cols = ','.join(f'"{f.column}"={pq_cast(dname, f, compiler, connection)}' for f in fields)
-    values = ','.join(rows)
+    values = ','.join([f'({",".join(row)})' for row in zip(*placeholders)])
     dcols = f'"{pkname}",' + ','.join(f'"{f.column}"' for f in fields)
     where = f'"{tname}"."{pkname}"="{dname}"."{pkname}"'
     return (
@@ -110,8 +149,7 @@ def as_sqlite(
     tname: str,
     pkname: str,
     fields: Sequence[Field],
-    rows: List[str],
-    count: int,
+    placeholders: List[str],
     compiler: SQLCompiler,
     connection: BaseDatabaseWrapper
 ) -> str:
@@ -123,7 +161,7 @@ def as_sqlite(
     dname = 'd' if tname != 'd' else 'c'
     cols = ','.join(f'"{f.column}"="{dname}"."column{i + 2}"'
         for i, f in enumerate(fields))
-    values = ','.join(rows)
+    values = ','.join([f'({",".join(row)})' for row in zip(*placeholders)])
     where = f'"{tname}"."{pkname}"="{dname}"."column1"'
     return f'UPDATE "{tname}" SET {cols} FROM (VALUES {values}) AS "{dname}" WHERE {where}'
 
@@ -132,8 +170,7 @@ def as_sqlite_cte(
     tname: str,
     pkname: str,
     fields: Sequence[Field],
-    rows: List[str],
-    count: int,
+    placeholders: List[str],
     compiler: SQLCompiler,
     connection: BaseDatabaseWrapper
 ) -> str:
@@ -157,99 +194,51 @@ def as_sqlite_cte(
     This sacrifices some bandwidth, but is only ~40% slower than the
     FROM VALUES table join.
     """
-    # TODO: needs proper field names escaping
-    # FIXME: CTE pattern does not set rowcount correctly, needs patch in update_from_values
-    # FIXME: pk values in where need placeholder calc
-    # FIXME: dont use pk as fixed col name, proper escape of col names
     dname = 'd' if tname != 'd' else 'c'
-    cols = ', '.join([f.column for f in fields])
-    values = ' UNION ALL '.join([' SELECT ' + row[1:-1] for row in rows])
-    where = f'"{tname}"."{pkname}"={dname}.pk'
+    cols = ', '.join([f'"{f.column}"' for f in fields])
+    rows = [','.join(row) for row in zip(*placeholders)]
+    values = ' UNION ALL '.join([' SELECT ' + row for row in rows])
+    where = f'"{tname}"."{pkname}"={dname}."{pkname}"'
+    pks = ','.join(placeholders[0])
     return (
-        f'WITH {dname}(pk, {cols}) AS ({values}) '
+        f'WITH {dname}("{pkname}", {cols}) AS ({values}) '
         f'UPDATE "{tname}" '
         f'SET ({cols}) = (SELECT {cols} FROM {dname} WHERE {where}) '
-        f'WHERE "{tname}"."{pkname}" in ({",".join(["%s"]*count)})'
+        f'WHERE "{tname}"."{pkname}" in ({pks})'
     )
+
+def prepare_data_sqlite_cte(data, width, height):
+    return data + [data[i] for i in range(0, len(data), width)]
 
 
 def as_mysql(
     tname: str,
     pkname: str,
     fields: Sequence[Field],
-    rows: List[str],
-    count: int,
+    placeholders: List[str],
     compiler: SQLCompiler,
     connection: BaseDatabaseWrapper
 ) -> str:
     """
-    For mariadb we use TVC, introduced in 10.3.3.
-    (see https://mariadb.com/kb/en/table-value-constructors/)
+    For MySQL we use old style SELECT + UNION ALL to create the values table.
+    This also keeps it compatible to older MySQL and MariaDB versions.
 
-    Mariadb's TVC support lacks several features like column aliasing,
-    instead it pulls the column names from the first data row.
-    To deal with that weird behavior, we prepend a row with increasing numbers
-    as column names (0,1, ...). To avoid wrong pk matches against that
-    fake data row during the update join, the values table gets applied
-    with an offset by 1 select.
+    Newer db versions have a more direct way to load literal values with
+    TVC (MariaDB 10.3.3+) and extended VALUES statement (MySQL 8.0.19+).
+    We dont use those anymore, as they dont show a performance improvement,
+    while creating much code/branching noise for no good reason.
     """
-    dname = 'd' if tname != 'd' else 'c'
-    temp = 'temp1' if tname != 'temp1' else 'temp2'
-    cols = ','.join(f'`{tname}`.`{f.column}`={dname}.{i+1}' for i, f in enumerate(fields))
-    # mysql only: prepend placeholders for additional (0,1,2,...) row
-    values = ','.join([f'({",".join(["%s"] * (len(fields) + 1))})'] + rows)
-    where = f'`{tname}`.`{pkname}` = {dname}.0'
-    return (
-        f'UPDATE `{tname}`, '
-        f'(SELECT * FROM (VALUES {values}) AS {temp} LIMIT {count} OFFSET 1) AS {dname} '
-        f'SET {cols} WHERE {where}'
-    )
-
-
-def as_mysql8(
-    tname: str,
-    pkname: str,
-    fields: Sequence[Field],
-    rows: List[str],
-    count: int,
-    compiler: SQLCompiler,
-    connection: BaseDatabaseWrapper
-) -> str:
-    """
-    For MySQL we use the extended VALUES statement, introduced in MySQL 8.0.19.
-    (see https://dev.mysql.com/doc/refman/8.0/en/values.html)
-
-    It differs alot from mariadb's TVC, thus we have to handle it separately.
-    """
-    dname = 'd' if tname != 'd' else 'c'
-    cols = ','.join(f'`{f.column}`={dname}.column_{i+1}' for i, f in enumerate(fields))
-    values = ','.join('ROW' + r for r in rows)
-    on = f'`{tname}`.`{pkname}` = {dname}.column_0'
-    return f'UPDATE `{tname}` INNER JOIN (VALUES {values}) AS {dname} ON {on} SET {cols}'
-
-
-def as_mysql_old(
-    tname: str,
-    pkname: str,
-    fields: Sequence[Field],
-    rows: List[str],
-    count: int,
-    compiler: SQLCompiler,
-    connection: BaseDatabaseWrapper
-) -> str:
-    """
-    Workaround for older MySQL (<8.0) and MariaDB (<10.3) versions.
-    """
-    # FIXME: better first values calc
-    # FIXME: this dies much earlier from mysql stack limit?
-    # TODO: test MariaDB 10.2
-    # TODO: Is this better than using half broken TVC in MariaDB 10.3+?
     dname = 'd' if tname != 'd' else 'c'
     cols = ','.join(f'`{tname}`.`{f.column}`=`{dname}`.`{f.column}`' for f in fields)
     colnames = [pkname] + [f.column for f in fields]
-    first = ' SELECT ' + ', '.join([f'{ph} AS `{colname}`' for ph, colname in zip(rows[0][1:-1].split(','), colnames)])
-    later = ' UNION ALL '.join([' SELECT ' + row[1:-1] for row in rows[1:]])
-    values = f'{first} UNION ALL {later}' if later else first
+    row_phs = [ph for ph in zip(*placeholders)]
+    first_row = 'SELECT '
+    first_row += ','.join([
+        f'{ph} AS `{colname}`'
+        for ph, colname in zip(row_phs[0], colnames)
+    ])
+    later_rows = ' UNION ALL '.join(['SELECT ' + ','.join(ph) for ph in row_phs[1:]])
+    values = f'{first_row} UNION ALL {later_rows}' if later_rows else first_row
     where = f'`{tname}`.`{pkname}` = `{dname}`.`{pkname}`'
     return (
         f'UPDATE `{tname}`, ({values}) {dname} '
@@ -257,62 +246,24 @@ def as_mysql_old(
     )
 
 
-# possible scheme for oracle 21
-# UPDATE (SELECT taa.n n,
-#                taa.t1 tt1,
-#                taa.t2 tt2,
-#                ta1.num num,
-#                ta1.letter letter,
-#                ta1.hmm hmm
-#           FROM ttt taa,
-#           (SELECT 1 AS num, 'one' AS letter, 'a' as hmm FROM dual
-# UNION ALL SELECT 2, 'two', 'b'   FROM dual
-# UNION ALL SELECT 3, 'three', 'c' FROM dual) ta1
-#          WHERE num = n)
-#    SET tt1 = letter,
-#        tt2 = hmm
-
-# possible scheme for oracle 18+
-# unclear: bad runtime due to subquery re-eval?
-# UPDATE ttt ta1
-#    SET (t1, t2) = (SELECT ta2.letter, ta2.hmm FROM (SELECT 1 AS num, 'one' AS letter, 'a' as hmm FROM dual
-# UNION ALL SELECT 2, 'two', 'b'   FROM dual
-# UNION ALL SELECT 3, 'three', 'c' FROM dual) ta2
-# WHERE ta1.n = ta2.num)
-# WHERE ta1.n in (1,2,3);
-
-# more elegant with own type in oracle?
-# create type t as object (a varchar2(10), b varchar2(10), c number);
-# create type tt as table of t;
-# select * from table( tt (
-#     t('APPLE', 'FRUIT', 1),
-#     t('APPLE', 'FRUIT', 1122),
-#     t('CARROT', 'VEGGIExxxxxxxxxxx', 3),
-#     t('PEACH', 'FRUIT', 104),
-#     t('CUCUMBER', 'VEGGIE', 5),
-#     t('ORANGE', 'FRUIT', 6) ) );
-
-# possible scheme for MSSQL 2014+
-# UPDATE ttt
-# SET ttt.t1 = temp.v
-# FROM (VALUES (1, 'bla'), (2, 'gurr'), (1, 'xxx')) temp(pk, v)
-# WHERE ttt.n = temp.pk;
-
-
-# TODO: Make is pluggable for other vendors? (also support check)
-QUERY = {
-    'sqlite': as_sqlite,
-    'sqlite_cte': as_sqlite_cte,
-    'postgresql': as_postgresql,
-    'mysql': as_mysql,
-    'mysql8': as_mysql8,
-    'mysql_old': as_mysql_old
-}
+register_implementation(
+    'postgresql',
+    lambda conn: (as_postgresql, None)
+)
+register_implementation(
+    'sqlite',
+    lambda conn: (as_sqlite, None) if conn.Database.sqlite_version_info >= (3, 33)
+        else (as_sqlite_cte, prepare_data_sqlite_cte)
+)
+register_implementation(
+    'mysql',
+    lambda conn: (as_mysql, None)
+)
 
 
 def update_from_values(
     c: CursorWrapper,
-    vendor: str,
+    #vendor: str,
     tname: str,
     pk_field: Field,
     fields: List[Field],
@@ -322,10 +273,10 @@ def update_from_values(
     connection: BaseDatabaseWrapper
 ) -> int:
     """
-    Generate vendor specific sql statement and execute it for given data.
+    Generate vendor specific SQL statement and execute it for given data.
     """
     # The following placeholder calc is quite cumbersome:
-    # For fast processing we approach the data col-based (90° turned)
+    # For fast processing we approach the data col-based (transposed)
     # to save runtime for funcion pointer juggling for every single row
     # which is ~90% faster than a more direct row-based evaluation.
     # This is still alot slower than direct flat layouting, but not significant
@@ -333,24 +284,25 @@ def update_from_values(
     row_fields = [pk_field] + fields
     row_length = len(row_fields)
     default_placeholder = ['%s'] * counter
-    col_placeholders = [
+    placeholders = [
         ([
             f.get_placeholder(data[i], compiler, connection)
             for i in range(pos, len(data), row_length)
         ] if hasattr(f, 'get_placeholder') else default_placeholder)
         for pos, f in enumerate(row_fields)
     ]
-    # FIXME: remove paranthesis here, apply late in query functions instead
-    rows = [f'({", ".join(row)})' for row in zip(*col_placeholders)]
-    sql = QUERY[vendor](tname, pk_field.column, fields, rows, counter, compiler, connection)
-    if vendor == 'mysql':
-        # mysql only: prepend (0,1,2,...) as first row
-        data = list(range(len(fields) + 1)) + data
-    elif vendor == 'sqlite_cte':
-        # append pks a second time for faster WHERE IN narrowing in CTE variant
-        data += [data[i] for i in range(0, len(data), row_length)]
+    create_sql, prepare_data = get_impl(connection)
+    sql = create_sql(tname, pk_field.column, fields, placeholders, compiler, connection)
+    if prepare_data:
+        data = prepare_data(data, row_length, counter)
     c.execute(sql, data)
-    return c.rowcount
+    rows_updated = c.rowcount
+    # NOTE: SQLite cannot report correct rowcount from a CTE context
+    # as per Python DB API 2.0 (PEP 249) we treat -1 in rowcount
+    # as fault and return counter instead
+    if rows_updated == -1:
+        return counter
+    return rows_updated
 
 
 def fast_update(
@@ -363,9 +315,8 @@ def fast_update(
     conn = connections[qs.db]
     model = qs.model
 
-    # fall back to bulk_update if we dont have a working fast_update impl
-    vendor = get_vendor(conn)
-    if not vendor:  # pragma: no cover
+    ## fall back to bulk_update if we dont have a working fast_update impl
+    if not get_impl(conn):
         return qs.bulk_update(objs, fieldnames, batch_size)
 
     # filter all non model local fields --> still handled by bulk_update
@@ -400,14 +351,14 @@ def fast_update(
                 data += [p(v, conn) for p, v in zip(prep_save, get(o))]
                 if counter >= batch_size_adjusted:
                     rows_updated += update_from_values(
-                        c, vendor, model._meta.db_table, pk_field, fields,
+                        c, model._meta.db_table, pk_field, fields,
                         counter, data, compiler, conn
                     )
                     data = []
                     counter = 0
             if data:
                 rows_updated += update_from_values(
-                    c, vendor, model._meta.db_table, pk_field, fields,
+                    c, model._meta.db_table, pk_field, fields,
                     counter, data, compiler, conn
                 )
 
