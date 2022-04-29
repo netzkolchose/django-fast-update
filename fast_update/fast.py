@@ -106,7 +106,7 @@ def get_impl(conn: BaseDatabaseWrapper) -> str:
     if impl is not None:
         return impl
     check = CHECKER.get(conn.vendor)
-    if not check:
+    if not check:   # pragma: no cover
         SEEN_CONNECTIONS[conn] = tuple()
         return tuple()
     impl = check(conn)
@@ -316,7 +316,7 @@ def fast_update(
     model = qs.model
 
     ## fall back to bulk_update if we dont have a working fast_update impl
-    if not get_impl(conn):
+    if not get_impl(conn):  # pragma: no cover
         return qs.bulk_update(objs, fieldnames, batch_size)
 
     # filter all non model local fields --> still handled by bulk_update
