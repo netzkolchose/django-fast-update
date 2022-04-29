@@ -3,7 +3,6 @@ from django.db import transaction, models, connections
 from django.db.models.functions import Cast
 from django.db.models.expressions import Col
 from operator import attrgetter
-import logging
 
 # typing imports
 from django.db.models import Field
@@ -13,11 +12,20 @@ from django.db.backends.utils import CursorWrapper
 from django.db.backends.base.base import BaseDatabaseWrapper
 
 
-logger = logging.getLogger(__name__)
-
-
 """
 DB vendor low level interfaces
+
+To register a fast update implementations, call:
+
+    register_implementation('alias', check_function)
+
+where `alias` is the vendor name as returned by `connection.vendor`.
+The check function gets called once (lazy) with `connection` and is meant
+to find a suitable implementation (you can provide multiple for different
+server versions), either actively by probing against the db server,
+or directly if it can be determined upfront.
+The check function should return a tuple of (create_sql, prepare_data | None)
+for supported backends, or an empty tuple, if the backend is unsupported.
 
 create_sql function:
 
@@ -59,18 +67,6 @@ prepare_data function:
     the flat data table preparation is needed. The data is row based,
     and contains field values in [pk] + fields order.
     Return the altered data listing according to the SQL needs.
-
-To register a fast update implementations, call:
-
-    register_implementation('alias', check_function)
-
-where `alias` is the vendor name as returned by `connection.vendor`.
-The check function gets called once (lazy) with `connection` and is meant
-to find a suitable implementation (you can provide multiple for different
-server versions, if needed), either actively by probing against
-the db server, or directly if it can be determined upfront.
-The check function must return a tuple of (create_sql, prepare_data | None)
-for supported backends, or an empty tuple, if the backend is unsupported.
 """
 
 
@@ -109,7 +105,7 @@ def get_impl(conn: BaseDatabaseWrapper) -> str:
     if not check:   # pragma: no cover
         SEEN_CONNECTIONS[conn] = tuple()
         return tuple()
-    impl = check(conn)
+    impl = check(conn) or tuple()   # NOTE: in case check returns something nullish
     SEEN_CONNECTIONS[conn] = impl
     return impl
 
@@ -207,6 +203,7 @@ def as_sqlite_cte(
         f'WHERE "{tname}"."{pkname}" in ({pks})'
     )
 
+
 def prepare_data_sqlite_cte(data, width, height):
     return data + [data[i] for i in range(0, len(data), width)]
 
@@ -246,24 +243,25 @@ def as_mysql(
     )
 
 
+# Register our default db implementations.
 register_implementation(
     'postgresql',
-    lambda conn: (as_postgresql, None)
+    lambda _: (as_postgresql, None)
 )
 register_implementation(
     'sqlite',
+    # NOTE: check function does not handle versions <2.15 anymore
     lambda conn: (as_sqlite, None) if conn.Database.sqlite_version_info >= (3, 33)
         else (as_sqlite_cte, prepare_data_sqlite_cte)
 )
 register_implementation(
     'mysql',
-    lambda conn: (as_mysql, None)
+    lambda _: (as_mysql, None)
 )
 
 
 def update_from_values(
     c: CursorWrapper,
-    #vendor: str,
     tname: str,
     pk_field: Field,
     fields: List[Field],
