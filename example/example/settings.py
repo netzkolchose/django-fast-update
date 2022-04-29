@@ -113,6 +113,7 @@ elif DBENGINE == 'mysql':
     }
 elif DBENGINE == 'mysql8':
     # docker run --name some-mysql -e MYSQL_ROOT_PASSWORD=root -e MYSQL_DATABASE=database -p 6603:3306 -d mysql
+    # mysql:5.7.38 for mysql_old
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
