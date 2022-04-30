@@ -288,7 +288,7 @@ class TestSanityChecks(TestCase):
         self.assertRaisesMessage(
             ValueError,
             'All fast_update() objects must have a primary key set.',
-            lambda : FieldUpdate.objects.fast_update([FieldUpdate(**EXAMPLE), FieldUpdate(**EXAMPLE)], ['f_char'])
+            lambda : FieldUpdate.objects.fast_update([FieldUpdate(**EXAMPLE)], ['f_char'])
         )
         # non concrete field
         mbase = MultiBase.objects.create()
@@ -305,37 +305,18 @@ class TestSanityChecks(TestCase):
         )
 
 
-class TestFilterDuplicates(TestCase):
-    def test_apply_first_duplicate_only(self):
+class TestDuplicates(TestCase):
+    def test_raise_on_duplicates(self):
         a = FieldUpdate.objects.create()
-        updated = FieldUpdate.objects.fast_update([
-            FieldUpdate(pk=a.pk, **EXAMPLE),    # all values are trueish
-            FieldUpdate(pk=a.pk)                # all values None
-        ], FIELDS)
-        # only 1 row updated
-        self.assertEqual(updated, 1)
-        v = FieldUpdate.objects.all().values().first()
-        # all values should be trueish
-        self.assertEqual(all(e for e in v.values()), True)
+        with self.assertRaisesMessage(ValueError, 'cannot update duplicates'):
+            FieldUpdate.objects.fast_update([
+                FieldUpdate(pk=a.pk),
+                FieldUpdate(pk=a.pk)
+            ], FIELDS)
 
-    def test_multiple_duplicates(self):
-        a = FieldUpdate.objects.create()
-        b = FieldUpdate.objects.create()
-        c = FieldUpdate.objects.create()
-        updated = FieldUpdate.objects.fast_update([
-            FieldUpdate(pk=a.pk, **EXAMPLE),    # all values are trueish
-            FieldUpdate(pk=a.pk),               # all values None
-            FieldUpdate(pk=a.pk),
-            FieldUpdate(pk=b.pk, **EXAMPLE),    # all values are trueish
-            FieldUpdate(pk=a.pk),
-            FieldUpdate(pk=a.pk),
-            FieldUpdate(pk=b.pk),
-            FieldUpdate(pk=c.pk, **EXAMPLE)     # all values are trueish
-        ], FIELDS)
-        # 3 row updated
-        self.assertEqual(updated, 3)
-        v = list(FieldUpdate.objects.all().values())
-        # all values should be trueish
-        self.assertEqual(all(e for e in v[0].values()), True)
-        self.assertEqual(all(e for e in v[1].values()), True)
-        self.assertEqual(all(e for e in v[2].values()), True)
+    def test_no_pk_duplicates(self):
+        with self.assertRaisesMessage(ValueError, 'cannot update duplicates'):
+            FieldUpdate.objects.fast_update([
+                FieldUpdate(),
+                FieldUpdate()
+            ], FIELDS)
