@@ -344,14 +344,9 @@ def fast_update(
         with conn.cursor() as c:
             data = []
             counter = 0
-            seen = set()
             for o in objs:
-                row = [p(v, conn) for p, v in zip(prep_save, get(o))]
-                # filter for first batch occurence
-                if row[0] not in seen:
-                    counter += 1
-                    data += row
-                    seen.add(row[0])
+                counter += 1
+                data += [p(v, conn) for p, v in zip(prep_save, get(o))]
                 if counter >= batch_size_adjusted:
                     rows_updated += update_from_values(
                         c, model._meta.db_table, pk_field, fields,
@@ -359,7 +354,6 @@ def fast_update(
                     )
                     data = []
                     counter = 0
-                    seen = set()
             if data:
                 rows_updated += update_from_values(
                     c, model._meta.db_table, pk_field, fields,

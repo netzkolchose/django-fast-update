@@ -17,7 +17,10 @@ def sanity_check(
         raise ValueError('Batch size must be a positive integer.')
     if not fields:
         raise ValueError('Field names must be given to fast_update().')
-    if any(obj.pk is None for obj in objs):
+    pks = set(obj.pk for obj in objs)
+    if len(pks) < len(objs):
+        raise ValueError('fast_update() cannot update duplicates.')
+    if None in pks:
         raise ValueError('All fast_update() objects must have a primary key set.')
     fields_ = [model._meta.get_field(name) for name in fields]
     if any(not f.concrete or f.many_to_many for f in fields_):
