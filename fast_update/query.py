@@ -10,31 +10,33 @@ def sanity_check(
     model: Type[Model],
     objs: Iterable[Model],
     fields: Iterable[str],
+    op: str,
     batch_size: Optional[int] = None
 ) -> None:
     # basic sanity checks (most taken from bulk_update)
     if batch_size is not None and batch_size < 0:
         raise ValueError('Batch size must be a positive integer.')
     if not fields:
-        raise ValueError('Field names must be given to fast_update().')
+        raise ValueError(f'Field names must be given to {op}.')
     pks = set(obj.pk for obj in objs)
     if len(pks) < len(objs):
-        raise ValueError('fast_update() cannot update duplicates.')
+        raise ValueError(f'{op} cannot update duplicates.')
     if None in pks:
-        raise ValueError('All fast_update() objects must have a primary key set.')
+        raise ValueError(f'All {op} objects must have a primary key set.')
     fields_ = [model._meta.get_field(name) for name in fields]
     if any(not f.concrete or f.many_to_many for f in fields_):
-        raise ValueError('fast_update() can only be used with concrete fields.')
+        raise ValueError(f'{op} can only be used with concrete fields.')
     if any(f.primary_key for f in fields_):
-        raise ValueError('fast_update() cannot be used with primary key fields.')
+        raise ValueError(f'{op} cannot be used with primary key fields.')
     for obj in objs:
+        # TODO: This is really heavy in the runtime books, any elegant way to speedup?
         # TODO: django main has an additional argument 'fields' (saves some runtime?)
         obj._prepare_related_fields_for_save(operation_name='fast_update')
         # additionally raise on f-expression
         for field in fields_:
-            attr = getattr(obj, field.attname)
-            if hasattr(attr, 'resolve_expression'):
-                raise ValueError('fast_update() cannot be used with f-expressions.')
+            # TODO: use faster attrgetter
+            if hasattr(getattr(obj, field.attname), 'resolve_expression'):
+                raise ValueError(f'{op} cannot be used with f-expressions.')
 
 
 class FastUpdateQuerySet(QuerySet):
@@ -65,7 +67,7 @@ class FastUpdateQuerySet(QuerySet):
             return 0
         objs = tuple(objs)
         fields_ = set(fields or [])
-        sanity_check(self.model, objs, fields_, batch_size)
+        sanity_check(self.model, objs, fields_, 'fast_update()', batch_size)
         return fast_update(self, objs, fields_, batch_size)
 
     fast_update.alters_data = True
@@ -114,7 +116,7 @@ class FastUpdateQuerySet(QuerySet):
             return 0
         objs = tuple(objs)
         fields_ = set(fields or [])
-        sanity_check(self.model, objs, fields_)
+        sanity_check(self.model, objs, fields_, 'copy_update()')
         return copy_update(self, objs, fields_, field_encoders, encoding)
     
     copy_update.alters_data = True

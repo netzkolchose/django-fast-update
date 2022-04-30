@@ -436,11 +436,21 @@ class TestCopyUpdateNotNull(TestCase):
         for r in results[1:]:
             for f in CU_FIELDS:
                 self.assertEqual(r[f], first[f])
-        # force threaded write
-        update_c = update_b * 100
-        FieldUpdateNotNull.objects.copy_update(update_c, CU_FIELDS)
+
+    def test_updatefull_multiple_threaded(self):
+        objs = []
+        for _ in range(10000):
+            objs.append(FieldUpdateNotNull())
+        FieldUpdateNotNull.objects.bulk_create(objs)
+        changeset = []
+        for o in objs:
+            changeset.append(FieldUpdateNotNull(pk=o.pk, **CU_EXAMPLE))
+
+        # force copy_update to use threaded logic due to payload >>64kB
+        FieldUpdateNotNull.objects.copy_update(changeset, CU_FIELDS)
         results = list(FieldUpdateNotNull.objects.all().values(*CU_FIELDS))
-        for r in results[201:]:
+        first = results[0]
+        for r in results[1:]:
             for f in CU_FIELDS:
                 self.assertEqual(r[f], first[f])
 
