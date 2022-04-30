@@ -15,7 +15,7 @@ from django.db.backends.base.base import BaseDatabaseWrapper
 """
 DB vendor low level interfaces
 
-To register a fast update implementations, call:
+To register fast update implementations, call:
 
     register_implementation('vendor', check_function)
 
@@ -70,44 +70,7 @@ prepare_data function:
 """
 
 
-# memorize fast_update vendor on connection object
-SEEN_CONNECTIONS = cast(Dict[BaseDatabaseWrapper, str], WeakKeyDictionary())
-CHECKER = {}
-
-def register_implementation(
-    vendor: str,
-    func: Callable[[BaseDatabaseWrapper], Tuple[Any]]
-) -> None:
-    """
-    Register fast update implementation for db vendor.
-
-    `vendor` is the vendor name as returned by `connection.vendor`.
-    `func` is a lazy called function to check support for a certain
-    implementation at runtime for `connection`. The function should return
-    a tuple of (create_sql, prepare_data | None) for supported backends,
-    otherwise an empty tuple (needed to avoid re-eval).
-    """
-    CHECKER[vendor] = func
-
-
-def get_impl(conn: BaseDatabaseWrapper) -> str:
-    """
-    Try to get a fast update implementation for `conn`.
-    Calls once the the check function of `register_implementation` and
-    memorizes its result for `conn`.
-    Returns a tuple (create_sql, prepare_data | None) for supported backends,
-    otherwise an empty tuple.
-    """
-    impl = SEEN_CONNECTIONS.get(conn)
-    if impl is not None:
-        return impl
-    check = CHECKER.get(conn.vendor)
-    if not check:   # pragma: no cover
-        SEEN_CONNECTIONS[conn] = tuple()
-        return tuple()
-    impl = check(conn) or tuple()   # NOTE: in case check returns something nullish
-    SEEN_CONNECTIONS[conn] = impl
-    return impl
+# Fast update implementations for postgres, sqlite and mysql.
 
 
 def pq_cast(tname: str, field: Field, compiler: SQLCompiler, connection: Any) -> str:
@@ -243,14 +206,57 @@ def as_mysql(
     )
 
 
-# Register our default db implementations.
+# Implementation registry.
+
+
+# memorize fast_update vendor on connection object
+SEEN_CONNECTIONS = cast(Dict[BaseDatabaseWrapper, str], WeakKeyDictionary())
+CHECKER = {}
+
+def register_implementation(
+    vendor: str,
+    func: Callable[[BaseDatabaseWrapper], Tuple[Any]]
+) -> None:
+    """
+    Register fast update implementation for db vendor.
+
+    `vendor` is the vendor name as returned by `connection.vendor`.
+    `func` is a lazy called function to check support for a certain
+    implementation at runtime for `connection`. The function should return
+    a tuple of (create_sql, prepare_data | None) for supported backends,
+    otherwise an empty tuple (needed to avoid re-eval).
+    """
+    CHECKER[vendor] = func
+
+
+def get_impl(conn: BaseDatabaseWrapper) -> str:
+    """
+    Try to get a fast update implementation for `conn`.
+    Calls once the check function of `register_implementation` and
+    memorizes its result for `conn`.
+    Returns a tuple (create_sql, prepare_data | None) for supported backends,
+    otherwise an empty tuple.
+    """
+    impl = SEEN_CONNECTIONS.get(conn)
+    if impl is not None:
+        return impl
+    check = CHECKER.get(conn.vendor)
+    if not check:   # pragma: no cover
+        SEEN_CONNECTIONS[conn] = tuple()
+        return tuple()
+    impl = check(conn) or tuple()   # NOTE: in case check returns something nullish
+    SEEN_CONNECTIONS[conn] = impl
+    return impl
+
+
+# Register default db implementations from above.
 register_implementation(
     'postgresql',
     lambda _: (as_postgresql, None)
 )
 register_implementation(
     'sqlite',
-    # NOTE: check function does not handle versions <2.15 anymore
+    # NOTE: check function does not handle versions <3.15 anymore
     lambda conn: (as_sqlite, None) if conn.Database.sqlite_version_info >= (3, 33)
         else (as_sqlite_cte, prepare_data_sqlite_cte)
 )
@@ -258,6 +264,9 @@ register_implementation(
     'mysql',
     lambda _: (as_mysql, None)
 )
+
+
+# Update implementation.
 
 
 def update_from_values(
