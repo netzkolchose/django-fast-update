@@ -79,7 +79,7 @@ The whole package is tested with Django 3.2 & 4.0 on Python 3.8 & 3.10.
 ### Performance ###
 
 There is a management command in the example app testing performance of updates on the `FieldUpdate`
-model (`./manange.py perf`).
+model (`./manage.py perf`).
 
 `fast_update` is at least 8 times faster than `bulk_update`, and keeps making ground for bigger changesets.
 This indicates different runtime complexity. `fast_update` grows almost linear for very big numbers of rows
