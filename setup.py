@@ -15,7 +15,7 @@ setup(
     name='django-fast-update',
     packages=find_packages(exclude=['example']),
     include_package_data=True,
-    install_requires=['Django>=3.2,<4.1'],
+    install_requires=['Django>=3.2,<4.2'],
     version=get_version('fast_update/__init__.py'),
     license='MIT',
     description='Faster db updates for Django using UPDATE FROM VALUES sql variants.',
