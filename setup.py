@@ -24,7 +24,7 @@ setup(
     author='netzkolchose',
     author_email='j.breitbart@netzkolchose.de',
     url='https://github.com/netzkolchose/django-fast-update',
-    download_url='https://github.com/netzkolchose/django-fast-update/archive/v0.2.0.tar.gz',
+    download_url='https://github.com/netzkolchose/django-fast-update/archive/v0.2.1.tar.gz',
     keywords=['django', 'bulk_update', 'fast', 'update', 'fast_update'],
     classifiers=[
         'Development Status :: 4 - Beta',
@@ -34,7 +34,7 @@ setup(
         'Topic :: Software Development :: Libraries',
         'Framework :: Django',
         'Framework :: Django :: 3.2',
-        'Framework :: Django :: 4.0',
+        'Framework :: Django :: 4.1',
         'License :: OSI Approved :: MIT License',
         'Programming Language :: Python :: 3',
         'Programming Language :: Python :: 3.8',
