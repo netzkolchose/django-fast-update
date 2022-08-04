@@ -906,7 +906,14 @@ def copy_update(
         c.execute(f'CREATE TEMPORARY TABLE "{temp}" ({create_columns(column_def)})')
         copy_from(c, temp, objs, attnames, colnames, get, encs,
             encoding or CONNECTION_ENCODINGS[c.connection.encoding])
-        c.execute(f'ANALYZE "{temp}" ({pk_field.column})')
+        # optimization (~6x speedup in ./manage.py perf for 10 instances):
+        # for small changesets ANALYZE is much more expensive than
+        # a sequential scan of the temp table
+        # tipping point is 150+-80 records (higher for less fields)
+        # --> enable ANALYZE for >100 only (assuming rather big records
+        #     for copy_update)
+        if len(objs) > 100:
+            c.execute(f'ANALYZE "{temp}" ({pk_field.column})')
         c.execute(update_sql(model._meta.db_table, temp, pk_field.column, fields))
         rows_updated = c.rowcount
         c.execute(f'DROP TABLE "{temp}"')
