@@ -108,9 +108,9 @@ class FastUpdateQuerySet(QuerySet):
         """
         self._for_write = True
         connection = connections[self.db]
-        if connection.vendor != 'postgresql':
+        if connection.vendor != 'postgresql' or connection.Database.__version__ > '3':
             raise NotSupportedError(
-                f'copy_update() is not supported on "{connection.vendor}" backend')
+                f'copy_update() only supported on "postgres" backend with psycopg2')
         from .copy import copy_update   # TODO: better in conditional import?
         if not objs:
             return 0

@@ -2,8 +2,8 @@ from math import isnan
 from django.db import connection
 
 import unittest
-if connection.vendor != 'postgresql':
-    raise unittest.SkipTest('postgres only tests')
+if connection.vendor != 'postgresql' or connection.Database.__version__ > '3':
+    raise unittest.SkipTest('postgres with pscopg2 only tests')
 
 from django.test import TestCase
 from .models import PostgresFields, FieldUpdateNotNull, CustomField, FieldUpdateArray, TestCoverage

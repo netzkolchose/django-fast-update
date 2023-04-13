@@ -68,12 +68,15 @@ argument (data is always transferred in one big batch). It can be used likewise 
 **Note** `copy_update` will probably never leave the alpha/PoC-state, as psycopg3 brings great COPY support,
 which does a more secure value conversion and has a very fast C-version.
 
+**Note** Django 4.2 brings psycopg3 support, which is currently not yet supported by `copy_update`.
+While psycopg2 will keep working as before, psycopg3 will raise on attempts to use `copy_update` until #16 got resolved.
+
 
 ### Status ###
 
 Currently beta, still some TODOs left.
 
-The whole package is tested with Django 3.2 & 4.0 on Python 3.8 & 3.10.
+The whole package is tested with Django 3.2 & 4.2 on Python 3.8 & 3.11.
 
 
 ### Performance ###
