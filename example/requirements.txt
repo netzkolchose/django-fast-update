@@ -1,4 +1,4 @@
-coverage==6.2
+coverage==7.2
 mysqlclient==2.1.0
 psycopg2-binary==2.9.3
 pytz==2022.1
