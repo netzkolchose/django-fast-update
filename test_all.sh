@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo -e "\nTEST: sqlite 3.33"
+echo -e "\nTEST: sqlite"
 DBENGINE=sqlite coverage run --parallel-mode --source='fast_update' ./example/manage.py test exampleapp || exit 1
 echo -e "\nTEST: postgres"
 DBENGINE=postgres  coverage run --parallel-mode --source='fast_update' ./example/manage.py test exampleapp || exit 1
