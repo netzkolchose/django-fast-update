@@ -15,7 +15,7 @@ setup(
     name='django-fast-update',
     packages=find_packages(exclude=['example']),
     include_package_data=True,
-    install_requires=['Django>=3.2,<=4.2'],
+    install_requires=['Django>=3.2'],
     version=get_version('fast_update/__init__.py'),
     license='MIT',
     description='Faster db updates for Django using UPDATE FROM VALUES sql variants.',
@@ -24,7 +24,7 @@ setup(
     author='netzkolchose',
     author_email='j.breitbart@netzkolchose.de',
     url='https://github.com/netzkolchose/django-fast-update',
-    download_url='https://github.com/netzkolchose/django-fast-update/archive/v0.2.2.tar.gz',
+    download_url='https://github.com/netzkolchose/django-fast-update/archive/v0.2.3.tar.gz',
     keywords=['django', 'bulk_update', 'fast', 'update', 'fast_update'],
     classifiers=[
         'Development Status :: 4 - Beta',
