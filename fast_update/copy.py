@@ -12,7 +12,12 @@ from django.db import connections, transaction, models
 from django.db.models.fields.related import RelatedField
 from django.contrib.postgres.fields import (HStoreField, ArrayField, IntegerRangeField,
     BigIntegerRangeField, DecimalRangeField, DateTimeRangeField, DateRangeField)
-from psycopg2.extras import Range
+
+from django.db import connection
+if connection.Database.__version__ > '3':
+    from psycopg.types.range import Range
+else:
+    from psycopg2.extras import Range
 
 # typings imports
 from django.db.backends.utils import CursorWrapper
@@ -81,6 +86,13 @@ CONNECTION_ENCODINGS = {
     'WIN1257': 'cp1257',
     'WIN1258': 'cp1258',
 }
+
+
+def get_encoding(conn) -> str:
+    if connection.Database.__version__ > '3':
+        return conn.info.encoding
+    else:
+        return CONNECTION_ENCODINGS[conn.encoding]  # psycopg2
 
 
 # NULL placeholder for COPY FROM
@@ -161,7 +173,7 @@ some_encoder.array_escape: bool = ...
 the field ``fname``. ``lazy`` is a context helper object for lazy encoders
 (see Lazy Encoder below).
 
-The return type should be a string in postgres' TEXT format. For proper escaping 
+The return type should be a string in postgres' TEXT format. For proper escaping
 the helper ``text_escape`` can be used. For None/nullish values ``NULL`` is predefined.
 It is also possible to return a python type directly, if it is known to translate
 correctly into the TEXT format from ``__str__`` output (some default encoders
@@ -426,7 +438,7 @@ def JsonOrNone(v: Any, fname: str, lazy: List[Any]):
 def Text(v: Any, fname: str, lazy: List[Any]):
     """
     Test and encode ``str``, raise for any other.
-    
+
     The encoder escapes characters as denoted in the postgres documentation
     for the TEXT format of COPY FROM.
     """
@@ -762,13 +774,19 @@ def write_lazy(f: BinaryIO, data: bytearray, stack: List[Any]) -> None:
     f.write(m[idx:])
 
 
-def threaded_copy(
+def compat_copy_from(
     c: CursorWrapper,
     fr: BinaryIO,
     tname: str,
     columns: Tuple[str]
 ) -> None:
-    c.copy_from(fr, tname, size=65536, columns=columns)
+    """A copy_from operation compatible between psycopg2 and psycopg 3."""
+    if not connection.Database.__version__ > '3':
+        c.copy_from(fr, tname, size=65536, columns=columns)
+    else:
+        with c.copy(f"COPY {tname} ({','.join(columns)}) FROM STDIN") as copy:
+            while data := fr.read(4096):
+                copy.write(data)
 
 
 def copy_from(
@@ -800,7 +818,7 @@ def copy_from(
                 fr = os.fdopen(r, 'rb')
                 fw = os.fdopen(w, 'wb')
                 t = Thread(
-                    target=threaded_copy,
+                    target=compat_copy_from,
                     args=[c.connection.cursor(), fr, tname, columns]
                 )
                 t.start()
@@ -839,7 +857,7 @@ def copy_from(
             f.seek(0)
         else:
             f = BytesIO(payload)
-        c.copy_from(f, tname, size=65536, columns=columns)
+        compat_copy_from(c, f, tname, columns)
         f.close()
 
 
@@ -905,7 +923,7 @@ def copy_update(
         c.execute(f'DROP TABLE IF EXISTS "{temp}"')
         c.execute(f'CREATE TEMPORARY TABLE "{temp}" ({create_columns(column_def)})')
         copy_from(c, temp, objs, attnames, colnames, get, encs,
-            encoding or CONNECTION_ENCODINGS[c.connection.encoding])
+            encoding or get_encoding(c.connection))
         # optimization (~6x speedup in ./manage.py perf for 10 instances):
         # for small changesets ANALYZE is much more expensive than
         # a sequential scan of the temp table

@@ -2,19 +2,40 @@ from math import isnan
 from django.db import connection
 
 import unittest
-if connection.vendor != 'postgresql' or connection.Database.__version__ > '3':
-    raise unittest.SkipTest('postgres with pscopg2 only tests')
+if connection.vendor != 'postgresql':
+    raise unittest.SkipTest('postgres only tests')
 
 from django.test import TestCase
 from .models import PostgresFields, FieldUpdateNotNull, CustomField, FieldUpdateArray, TestCoverage
 from exampleapp.models import FieldUpdate, MultiSub, Child, Parent
-from psycopg2.extras import NumericRange, DateTimeTZRange, DateRange
 import datetime
 import pytz
 import uuid
 from decimal import Decimal
 from fast_update.copy import get_encoder, register_fieldclass, Int, IntOrNone, array_factory
 import json
+
+if connection.Database.__version__ > '3':
+    from psycopg.types.range import Range
+
+    # For psycopg 3, Range is adapted automatically, see documentation:
+    # https://www.psycopg.org/psycopg3/docs/basic/pgtypes.html#range-adaptation
+    # The built-in range objects are adapted automatically:
+    # if a Range objects contains date bounds,
+    # it is dumped using the daterange OID,
+    # and of course daterange values are loaded back as Range[date].
+
+    DateRange, DateTimeTZRange, NumericRange = Range, Range, Range
+else:
+    from psycopg2.extras import DateRange, DateTimeTZRange, NumericRange
+
+
+def tobytes(val):
+    """The val is a bytes or a memoryview. For a memoryview, tobytes needs to be called."""
+    try:
+        return val.tobytes()
+    except AttributeError:
+        return val
 
 
 dt = datetime.datetime.now()
@@ -203,25 +224,25 @@ class TestCopyUpdate(TestCase):
     def test_binary(self):
         self._single('f_binary')
         self._single_raise('f_binary', 'wrong', "expected types <class 'memoryview'>, <class 'bytes'> or None")
-    
+
     def test_binary_big(self):
         # >64k
         data = b'1234567890' * 10000
         obj = FieldUpdate.objects.create()
         obj.f_binary = data
         FieldUpdate.objects.copy_update([obj], ['f_binary'])
-        self.assertEqual(FieldUpdate.objects.get(pk=obj.pk).f_binary.tobytes(), data)
+        self.assertEqual(tobytes(FieldUpdate.objects.get(pk=obj.pk).f_binary), data)
         # <64k
         data = b'1234567890' * 1000
         obj = FieldUpdate.objects.create()
         obj.f_binary = data
         FieldUpdate.objects.copy_update([obj], ['f_binary'])
-        self.assertEqual(FieldUpdate.objects.get(pk=obj.pk).f_binary.tobytes(), data)
+        self.assertEqual(tobytes(FieldUpdate.objects.get(pk=obj.pk).f_binary), data)
 
     def test_boolean(self):
         self._single('f_boolean')
         self._single_raise('f_boolean', 'wrong', "expected type <class 'bool'> or None")
-    
+
     def test_char(self):
         self._single('f_char')
         self._single_raise('f_char', 123, "expected type <class 'str'> or None")
@@ -302,9 +323,9 @@ class TestCopyUpdate(TestCase):
         obj.f_binary = b'0' * 100000
         obj.f_text = 'x' * 100000
         FieldUpdate.objects.copy_update([obj], ['f_binary', 'f_text'])
-        self.assertEqual(FieldUpdate.objects.get(pk=obj.pk).f_binary.tobytes(), b'0' * 100000)
+        self.assertEqual(tobytes(FieldUpdate.objects.get(pk=obj.pk).f_binary), b'0' * 100000)
         self.assertEqual(FieldUpdate.objects.get(pk=obj.pk).f_text, 'x' * 100000)
-    
+
     def test_lazy_after_big(self):
         obj1 = FieldUpdate.objects.create()
         obj1.f_text = 'x' * 70000
@@ -312,7 +333,7 @@ class TestCopyUpdate(TestCase):
         obj2.f_binary = b'0' * 100000
         FieldUpdate.objects.copy_update([obj1, obj2], ['f_binary', 'f_text'])
         self.assertEqual(FieldUpdate.objects.get(pk=obj1.pk).f_text, 'x' * 70000)
-        self.assertEqual(FieldUpdate.objects.get(pk=obj2.pk).f_binary.tobytes(), b'0' * 100000)
+        self.assertEqual(tobytes(FieldUpdate.objects.get(pk=obj2.pk).f_binary), b'0' * 100000)
 
 
 class TestCopyUpdateNotNull(TestCase):
@@ -342,25 +363,25 @@ class TestCopyUpdateNotNull(TestCase):
     def test_binary(self):
         self._single('f_binary')
         self._single_raise('f_binary', 'wrong', "expected types <class 'memoryview'> or <class 'bytes'>")
-    
+
     def test_binary_big(self):
         # >64k
         data = b'1234567890' * 10000
         obj = FieldUpdateNotNull.objects.create()
         obj.f_binary = data
         FieldUpdateNotNull.objects.copy_update([obj], ['f_binary'])
-        self.assertEqual(FieldUpdateNotNull.objects.get(pk=obj.pk).f_binary.tobytes(), data)
+        self.assertEqual(tobytes(FieldUpdateNotNull.objects.get(pk=obj.pk).f_binary), data)
         # <64k
         data = b'1234567890' * 1000
         obj = FieldUpdateNotNull.objects.create()
         obj.f_binary = data
         FieldUpdateNotNull.objects.copy_update([obj], ['f_binary'])
-        self.assertEqual(FieldUpdateNotNull.objects.get(pk=obj.pk).f_binary.tobytes(), data)
+        self.assertEqual(tobytes(FieldUpdateNotNull.objects.get(pk=obj.pk).f_binary), data)
 
     def test_boolean(self):
         self._single('f_boolean')
         self._single_raise('f_boolean', 'wrong', "expected type <class 'bool'>")
-    
+
     def test_char(self):
         self._single('f_char')
         self._single_raise('f_char', 123, "expected type <class 'str'>")
@@ -490,7 +511,7 @@ class TestNonlocalFields(TestCase):
             list(MultiSub.objects.all().values_list('b1', 'b2', 's1', 's2').order_by('pk')),
             [(i, i*10, i*100, i*1000) for i in range(10)]
         )
-    
+
     def test_nonlocal_only(self):
         objs = [MultiSub.objects.create() for _ in range(10)]
         for i, obj in enumerate(objs):
@@ -805,6 +826,7 @@ class TestCopyUpdateArray(TestCase):
                 res_a, res_b = FieldUpdateArray.objects.all().values(fieldname)
                 self.assertEqual(res_b[fieldname], res_a[fieldname])
 
+    @unittest.skipIf(connection.Database.__version__ > '3', "psycopg 3 does not perform array reduction")
     def test_2d(self):
         for fieldname, values in ARRAY_SINGLES.items():
             fieldname += '2'
@@ -953,6 +975,7 @@ class TestEncoderOverrides(TestCase):
 
 
 class TestArrayEvaluation(TestCase):
+    @unittest.skipIf(connection.Database.__version__ > '3', "psycopg 3 does not perform array reduction")
     def test_empty_reduction(self):
         a = FieldUpdateArray.objects.create()
         b = FieldUpdateArray.objects.create()
@@ -1016,7 +1039,7 @@ class TestHstoreAndRangeArray(TestCase):
             hstore={}, int_r=NumericRange(1,8), int_2d=[], hstore_2d=[], int_r_2d=[])
         b = TestCoverage.objects.create(
             hstore={}, int_r=NumericRange(1,8), int_2d=[], hstore_2d=[], int_r_2d=[])
-        
+
         # 1d
         a.hstore_2d = value
         b.hstore_2d = value
@@ -1044,7 +1067,7 @@ class TestHstoreAndRangeArray(TestCase):
             hstore={}, int_r=NumericRange(1,8), int_2d=[], hstore_2d=[], int_r_2d=[])
         b = TestCoverage.objects.create(
             hstore={}, int_r=NumericRange(1,8), int_2d=[], hstore_2d=[], int_r_2d=[])
-        
+
         # 1d
         a.int_r_2d = value
         b.int_r_2d = value
