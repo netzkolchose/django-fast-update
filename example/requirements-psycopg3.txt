@@ -1,5 +1,5 @@
 coverage==6.2
 Django==4.2
-psycopg==3.1.8
-psycopg-binary==3.1.8
+psycopg==3.2
+psycopg-binary==3.2
 pytz==2022.1
