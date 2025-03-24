@@ -2,7 +2,7 @@
 
 import datetime
 from django.db import migrations, models
-from datetime.timezone import utc
+from datetime import timezone
 import uuid
 
 
@@ -16,7 +16,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='fieldupdatenotnull',
             name='f_datetime',
-            field=models.DateTimeField(default=datetime.datetime(1000, 1, 1, 0, 0, tzinfo=utc)),
+            field=models.DateTimeField(default=datetime.datetime(1000, 1, 1, 0, 0, tzinfo=timezone.utc)),
         ),
         migrations.AlterField(
             model_name='fieldupdatenotnull',
