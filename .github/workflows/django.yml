@@ -12,8 +12,8 @@ jobs:
     strategy:
       max-parallel: 4
       matrix:
-        python-version: ['3.10', '3.11']
-        django-version: ['4.2', '5.1']
+        python-version: ['3.11', '3.13']
+        django-version: ['4.2', '5.2']
     services:
       postgres:
         image: postgres:latest
@@ -57,7 +57,7 @@ jobs:
     strategy:
       max-parallel: 4
       matrix:
-        python-version: ['3.10', '3.11']
+        python-version: ['3.11', '3.13']
     services:
       postgres:
         image: postgres:latest
