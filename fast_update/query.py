@@ -45,10 +45,12 @@ class FastUpdateQuerySet(QuerySet):
         self,
         objs: Iterable[Model],
         fields: Iterable[str],
-        batch_size: Optional[int] = None
+        batch_size: Optional[int] = None,
+        unfiltered: Optional[bool] = False
     ) -> int:
         """
-        Faster alternative for ``bulk_update`` with the same method signature.
+        Faster alternative for ``bulk_update`` with a compatible method
+        signature.
 
         Due to the way the update works internally with constant VALUES tables,
         f-expressions cannot be used anymore. Beside that it has similar
@@ -62,6 +64,12 @@ class FastUpdateQuerySet(QuerySet):
         ``batch_size`` can be set to much higher values than typically
         for ``bulk_update`` (if needed at all).
 
+        ``unfiltered`` denotes whether not to limit updates to prefilter
+        conditions. Note that prefiltering causes an additional database query
+        to retrieve matching pks. For better performance set it to false, which
+        will avoid the pk lookup and instead apply updates for all instances
+        in ``objs`` (default is false to be in line with ``bulk_update``).
+
         Returns the number of affected rows.
         """
         if not objs:
@@ -69,7 +77,7 @@ class FastUpdateQuerySet(QuerySet):
         objs = tuple(objs)
         fields = set(fields or [])
         sanity_check(self.model, objs, fields, 'fast_update', batch_size)
-        return fast_update(self, objs, fields, batch_size)
+        return fast_update(self, objs, fields, batch_size, unfiltered)
 
     fast_update.alters_data = True
 
@@ -82,7 +90,8 @@ class FastUpdateQuerySet(QuerySet):
         unfiltered: Optional[bool] = False
     ) -> int:
         """
-        Alternative for ``bulk_update`` with the same method signature.
+        Alternative for ``bulk_update`` with a compatible method
+        signature.
 
         The method uses ``update`` internally and attempts to merge values
         and pks into less UPDATE statements for better performance.
@@ -115,10 +124,11 @@ class FastUpdateQuerySet(QuerySet):
         unfiltered: Optional[bool] = False
     ) -> int:
         """
-        Alternative for ``bulk_update`` with the same method signature.
+        Alternative for ``bulk_update`` with a compatible method
+        signature.
 
         This method is the most straight-forward usage of ``update``
-        calling it at least once per object with all model-local fields.
+        calling it once per object with all model-local fields applied.
         Use this for dense updates, where field values have little
         to no intersections or update order is important.
 

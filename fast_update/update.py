@@ -149,7 +149,7 @@ def _update(
     rows_updated = 0
     with atomic(using=qs.db, savepoint=False):
         if not unfiltered and qs.query.where:
-          return func(qs, objs, fieldnames)
+            return func(qs, objs, fieldnames)
         for model, local_fields in group_fields(qs.model, fieldnames).items():
             if local_fields:
                 ru = func(model._base_manager.using(qs.db), objs, local_fields)
