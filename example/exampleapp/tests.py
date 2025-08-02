@@ -343,3 +343,79 @@ class TestDuplicates(TestCase):
                 FieldUpdate(),
                 FieldUpdate()
             ], FIELDS)
+
+
+class TestPrefiltering(TestCase):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_filter_sametable(self, update_impl):
+        a = MultiSub.objects.create(s1=1)
+        b = MultiSub.objects.create(s1=10)
+        c = MultiSub.objects.create(s1=100)
+        objs = [a, b, c]
+
+        # filtering
+        for i, o in enumerate(objs):
+            o.s2 = i + 10
+            o.b2 = i + 10
+        getattr(MultiSub.objects.filter(s1__gt=9), update_impl)(objs, ['s2', 'b2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().order_by('pk').values_list('s2', 'b2')),
+            [(None, None), (11, 11), (12, 12)]
+        )
+
+        # excluding
+        for i, o in enumerate(objs):
+            o.s2 = (i + 5) * 100
+            o.b2 = (i + 5) * 100
+        getattr(MultiSub.objects.exclude(s1=10), update_impl)(objs, ['s2', 'b2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().order_by('pk').values_list('s2', 'b2')),
+            [(500, 500), (11, 11), (700, 700)]
+        )
+
+        # unfiltered should apply to all
+        for i, o in enumerate(objs):
+            o.s2 = -i
+            o.b2 = -i
+        getattr(MultiSub.objects.filter(s1__gt=9), update_impl)(objs, ['s2', 'b2'], unfiltered=True)
+        self.assertEqual(
+            list(MultiSub.objects.all().order_by('pk').values_list('s2', 'b2')),
+            [(0, 0), (-1, -1), (-2, -2)]
+        )
+
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_filter_mt_othertable(self, update_impl):
+        a = MultiSub.objects.create(b1=1)
+        b = MultiSub.objects.create(b1=10)
+        c = MultiSub.objects.create(b1=100)
+        objs = [a, b, c]
+
+        # filtering
+        for i, o in enumerate(objs):
+            o.s2 = i + 10
+            o.b2 = i + 10
+        getattr(MultiSub.objects.filter(b1__gt=9), update_impl)(objs, ['s2', 'b2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().order_by('pk').values_list('s2', 'b2')),
+            [(None, None), (11, 11), (12, 12)]
+        )
+
+        # excluding
+        for i, o in enumerate(objs):
+            o.s2 = (i + 5) * 100
+            o.b2 = (i + 5) * 100
+        getattr(MultiSub.objects.exclude(b1=10), update_impl)(objs, ['s2', 'b2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().order_by('pk').values_list('s2', 'b2')),
+            [(500, 500), (11, 11), (700, 700)]
+        )
+
+        # unfiltered should apply to all
+        for i, o in enumerate(objs):
+            o.s2 = -i
+            o.b2 = -i
+        getattr(MultiSub.objects.filter(b1__gt=9), update_impl)(objs, ['s2', 'b2'], unfiltered=True)
+        self.assertEqual(
+            list(MultiSub.objects.all().order_by('pk').values_list('s2', 'b2')),
+            [(0, 0), (-1, -1), (-2, -2)]
+        )
