@@ -175,11 +175,3 @@ def merged_update(
     if len(objs) < 3:
         return _update(_flat, qs, objs, fieldnames, unfiltered)
     return _update(_merged, qs, objs, fieldnames, unfiltered)
-
-
-# TODO:
-# - document using all() losing any prefiltering
-# - document losing any row count for merged
-# - document unfiltered behavior
-# - expand tests to cover merge & flat
-# - explicit tests for predictor, unfiltered
