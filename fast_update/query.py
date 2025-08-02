@@ -1,9 +1,10 @@
 from django.db import connections
 from django.db.models import QuerySet, Model, Manager
 from django.db.utils import NotSupportedError
-from typing import Any, Dict, Iterable, Optional, Sequence, Type
+from typing import Any, Dict, Iterable, Optional, Type
 
 from .fast import fast_update
+from .update import flat_update, merged_update
 
 
 def sanity_check(
@@ -17,26 +18,26 @@ def sanity_check(
     if batch_size is not None and batch_size < 0:
         raise ValueError('Batch size must be a positive integer.')
     if not fields:
-        raise ValueError(f'Field names must be given to {op}.')
+        raise ValueError(f'Field names must be given to {op}().')
     pks = set(obj.pk for obj in objs)
     if len(pks) < len(objs):
-        raise ValueError(f'{op} cannot update duplicates.')
+        raise ValueError(f'{op}() cannot update duplicates.')
     if None in pks:
-        raise ValueError(f'All {op} objects must have a primary key set.')
+        raise ValueError(f'All {op}() objects must have a primary key set.')
     fields_ = [model._meta.get_field(name) for name in fields]
     if any(not f.concrete or f.many_to_many for f in fields_):
-        raise ValueError(f'{op} can only be used with concrete fields.')
+        raise ValueError(f'{op}() can only be used with concrete fields.')
     if any(f.primary_key for f in fields_):
-        raise ValueError(f'{op} cannot be used with primary key fields.')
+        raise ValueError(f'{op}() cannot be used with primary key fields.')
     for obj in objs:
         # TODO: This is really heavy in the runtime books, any elegant way to speedup?
         # TODO: django main has an additional argument 'fields' (saves some runtime?)
-        obj._prepare_related_fields_for_save(operation_name='fast_update')
+        obj._prepare_related_fields_for_save(operation_name=op)
         # additionally raise on f-expression
         for field in fields_:
             # TODO: use faster attrgetter
             if hasattr(getattr(obj, field.attname), 'resolve_expression'):
-                raise ValueError(f'{op} cannot be used with f-expressions.')
+                raise ValueError(f'{op}() cannot be used with f-expressions.')
 
 
 class FastUpdateQuerySet(QuerySet):
@@ -66,11 +67,76 @@ class FastUpdateQuerySet(QuerySet):
         if not objs:
             return 0
         objs = tuple(objs)
-        fields_ = set(fields or [])
-        sanity_check(self.model, objs, fields_, 'fast_update()', batch_size)
-        return fast_update(self, objs, fields_, batch_size)
+        fields = set(fields or [])
+        sanity_check(self.model, objs, fields, 'fast_update', batch_size)
+        return fast_update(self, objs, fields, batch_size)
 
     fast_update.alters_data = True
+
+
+    def merged_update(
+        self,
+        objs: Iterable[Model],
+        fields: Iterable[str],
+        batch_size: Optional[int] = None,
+        unfiltered: Optional[bool] = False
+    ) -> int:
+        """
+        Alternative for ``bulk_update`` with the same method signature.
+
+        The method uses ``update`` internally and attempts to merge values
+        and pks into less UPDATE statements for better performance.
+        This works well with sparse or heavily intersecting data.
+        The method will fall back to ``flat_update`` if the merging does
+        not promise any speed advantage.
+
+        ``batch_size`` is a dummy argument to keep the interface compatible.
+        ``unfiltered`` is false by default. Set it to true to ignore
+        any prefiltering on the queryset.
+
+        Returns the number objects. Due to the heavy update shuffling
+        a more exact number of rows cannot be provided anymore.
+        """
+        if not objs:
+            return 0
+        objs = tuple(objs)
+        fields = set(fields or [])
+        sanity_check(self.model, objs, fields, 'merged_update', batch_size)
+        return merged_update(self, objs, fields, unfiltered=unfiltered)
+
+    merged_update.alters_data = True
+
+
+    def flat_update(
+        self,
+        objs: Iterable[Model],
+        fields: Iterable[str],
+        batch_size: Optional[int] = None,
+        unfiltered: Optional[bool] = False
+    ) -> int:
+        """
+        Alternative for ``bulk_update`` with the same method signature.
+
+        This method is the most straight-forward usage of ``update``
+        calling it at least once per object with all model-local fields.
+        Use this for dense updates, where field values have little
+        to no intersections or update order is important.
+
+        ``batch_size`` is a dummy argument to keep the interface compatible.
+        ``unfiltered`` is false by default. Set it to true to ignore
+        any prefiltering on the queryset.
+
+        Returns the number of affected rows.
+        """
+        if not objs:
+            return 0
+        objs = tuple(objs)
+        fields = set(fields or [])
+        sanity_check(self.model, objs, fields, 'flat_update', batch_size)
+        return flat_update(self, objs, fields, unfiltered=unfiltered)
+
+    flat_update.alters_data = True
+
 
     def copy_update(
         self,
@@ -115,9 +181,9 @@ class FastUpdateQuerySet(QuerySet):
         if not objs:
             return 0
         objs = tuple(objs)
-        fields_ = set(fields or [])
-        sanity_check(self.model, objs, fields_, 'copy_update()')
-        return copy_update(self, objs, fields_, field_encoders, encoding)
+        fields = set(fields or [])
+        sanity_check(self.model, objs, fields, 'copy_update')
+        return copy_update(self, objs, fields, field_encoders, encoding)
     
     copy_update.alters_data = True
 
