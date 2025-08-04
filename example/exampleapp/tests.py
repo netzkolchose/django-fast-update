@@ -206,6 +206,8 @@ class TestForeignkeyField(TestCase):
         parent.child = Child()
         parent.child.save()
         getattr(Parent.objects, update_impl)([parent], fields=['child'])
+        # seems to be fixed upstream, but does not work for us?
+        #Parent.objects.bulk_update([parent], ['child'])
         self.assertEqual(parent.child_id, parent.child.pk)
         self.assertEqual(Parent.objects.get(pk=parent.pk).child_id, parent.child.pk)
 

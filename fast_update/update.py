@@ -31,6 +31,7 @@ The predictor works close enough in local tests with sqlite and postgres,
 but will hugely be skewed by several factors:
 - weight of field types (an integer is cheaper than a long string)
 - DB latency (with higher latency merge will be underestimated)
+- high pk distance in one UPDATE call will stress DB cache
 
 Both, type weighing and latency measuring is def. out of scope,
 thus the predictor gives only a conversative estimate preferring flat mode.

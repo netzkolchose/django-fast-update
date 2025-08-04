@@ -106,6 +106,9 @@ class FastUpdateQuerySet(QuerySet):
         ``unfiltered`` is false by default. Set it to true to ignore
         any prefiltering on the queryset.
 
+        This is update method currently flagged as ALPHA, as the merge and
+        prediction still need algorithmic rework and a proper test base.
+
         Returns the number objects. Due to the heavy update shuffling
         a more exact number of rows cannot be provided anymore.
         """
