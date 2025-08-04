@@ -14,6 +14,7 @@ import uuid
 from decimal import Decimal
 from fast_update.copy import get_encoder, register_fieldclass, Int, IntOrNone, array_factory
 import json
+from django.db.transaction import atomic
 
 # other than in copy.py using the default connection in global scope is ok here
 # (the tests only use the default connection)
@@ -828,7 +829,6 @@ class TestCopyUpdateArray(TestCase):
                 res_a, res_b = FieldUpdateArray.objects.all().values(fieldname)
                 self.assertEqual(res_b[fieldname], res_a[fieldname])
 
-    @unittest.skipIf(connection.Database.__version__ > '3', "psycopg 3 does not perform array reduction")
     def test_2d(self):
         for fieldname, values in ARRAY_SINGLES.items():
             fieldname += '2'
@@ -977,7 +977,9 @@ class TestEncoderOverrides(TestCase):
 
 
 class TestArrayEvaluation(TestCase):
-    @unittest.skipIf(connection.Database.__version__ > '3', "psycopg 3 does not perform array reduction")
+    # FIXME: this does not work in PG3 anymore
+    # investigate whether we have to adopt array_factory here...
+    #@unittest.skipIf(connection.Database.__version__ > '3', "psycopg 3 does not perform array reduction")
     def test_empty_reduction(self):
         a = FieldUpdateArray.objects.create()
         b = FieldUpdateArray.objects.create()
@@ -985,16 +987,27 @@ class TestArrayEvaluation(TestCase):
         # these all eval to empty array '{}' in ARRAY[] notation
         values = [
             [],
-            [[], None],
-            [[], [], None],
+            [[], None],         # does not pass in PG3 anymore
+            [[], [], None],     # does not pass in PG3 anymore
         ]
         for v in values:
             a.f_integer2 = v
             b.f_integer2 = v
-            FieldUpdateArray.objects.bulk_update([a], ['f_integer2'])
-            FieldUpdateArray.objects.copy_update([b], ['f_integer2'])
-            self.assertEqual(FieldUpdateArray.objects.get(pk=a.pk).f_integer2, [])
-            self.assertEqual(FieldUpdateArray.objects.get(pk=b.pk).f_integer2, [])
+            if connection.Database.__version__ < '3' or v == []:
+                FieldUpdateArray.objects.bulk_update([a], ['f_integer2'])
+                FieldUpdateArray.objects.copy_update([b], ['f_integer2'])
+                self.assertEqual(FieldUpdateArray.objects.get(pk=a.pk).f_integer2, [])
+                self.assertEqual(FieldUpdateArray.objects.get(pk=b.pk).f_integer2, [])
+            else:
+                # PG3 now raises on unblanced empties, so we should raise too
+                raises = False
+                try:
+                    with atomic():
+                        FieldUpdateArray.objects.copy_update([b], ['f_integer2'])
+                except ValueError as e:
+                    raised = True
+                if not raised:
+                    raise Exception('should have raised')
 
     def test_unbalanced1(self):
         a = FieldUpdateArray.objects.create()

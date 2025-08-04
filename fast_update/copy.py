@@ -13,17 +13,18 @@ from django.db.models.fields.related import RelatedField
 from django.contrib.postgres.fields import (HStoreField, ArrayField, IntegerRangeField,
     BigIntegerRangeField, DecimalRangeField, DateTimeRangeField, DateRangeField)
 from .update import group_fields
+from django.core.exceptions import ImproperlyConfigured
 
 
 try:
-    from psycopg.types.range import Range
-    PG3 = True
-except ImportError:
     try:
+        from psycopg.types.range import Range
+        PG3 = True
+    except ImportError:
         from psycopg2.extras import Range
         PG3 = False
-    except ImportError:
-        raise Exception('either psycopg2 or psycopg3 must be installed')
+except ImportError:
+    raise ImproperlyConfigured("Error loading psycopg2 or psycopg module")
 
 
 # typings imports
@@ -669,7 +670,8 @@ def array_factory(encoder, depth=1, null=False) -> FieldEncoder:
                 raise TypeError(f'expected type {list} or {tuple} for field "{fname}", got None')
             if isinstance(v, (list, tuple)):
                 # test for empty reduction
-                if is_empty_array(v):
+                # NOTE: PG3 now raises on unblanced empties
+                if is_empty_array(v) and not PG3:
                     return '{}'
                 # other than bulk_update we have to do the balance check in python to get
                 # a meaningful error, as postgres throws only an unspecific syntax error
