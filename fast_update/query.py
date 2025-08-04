@@ -195,7 +195,7 @@ class FastUpdateQuerySet(QuerySet):
         connection = connections[self.db]
         if connection.vendor != 'postgresql':
             raise NotSupportedError(f'copy_update() is not supported on "{connection.vendor}" backend')
-        from .copy import copy_update   # TODO: better in conditional import?
+        from .copy import copy_update
         if not objs:
             return 0
         objs = tuple(objs)

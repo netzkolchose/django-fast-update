@@ -15,6 +15,8 @@ from decimal import Decimal
 from fast_update.copy import get_encoder, register_fieldclass, Int, IntOrNone, array_factory
 import json
 
+# other than in copy.py using the default connection in global scope is ok here
+# (the tests only use the default connection)
 if connection.Database.__version__ > '3':
     from psycopg.types.range import Range
 

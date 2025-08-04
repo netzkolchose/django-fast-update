@@ -12,17 +12,23 @@ from django.db import connections, transaction, models
 from django.db.models.fields.related import RelatedField
 from django.contrib.postgres.fields import (HStoreField, ArrayField, IntegerRangeField,
     BigIntegerRangeField, DecimalRangeField, DateTimeRangeField, DateRangeField)
-from django.db import connection
-if connection.Database.__version__ > '3':
-    from psycopg.types.range import Range
-else:
-    from psycopg2.extras import Range
 from .update import group_fields
+
+
+try:
+    from psycopg.types.range import Range
+    PG3 = True
+except ImportError:
+    try:
+        from psycopg2.extras import Range
+        PG3 = False
+    except ImportError:
+        raise Exception('either psycopg2 or psycopg3 must be installed')
 
 
 # typings imports
 from django.db.backends.utils import CursorWrapper
-from typing import (Any, BinaryIO, Callable, Dict, Generic, Iterable, List, Optional,
+from typing import (Any, BinaryIO, Callable, Dict, Generic, List, Optional,
                     Sequence, Tuple, Type, TypeVar, Union, cast)
 
 
@@ -91,10 +97,12 @@ CONNECTION_ENCODINGS = {
 
 
 def get_encoding(conn) -> str:
-    if connection.Database.__version__ > '3':
+    if PG3:
+        # psycopg3
         return conn.info.encoding
     else:
-        return CONNECTION_ENCODINGS[conn.encoding]  # psycopg2
+        # psycopg2
+        return CONNECTION_ENCODINGS[conn.encoding]
 
 
 # NULL placeholder for COPY FROM
@@ -783,12 +791,12 @@ def compat_copy_from(
     columns: Tuple[str]
 ) -> None:
     """A copy_from operation compatible between psycopg2 and psycopg 3."""
-    if not connection.Database.__version__ > '3':
-        c.copy_from(fr, tname, size=65536, columns=columns)
-    else:
+    if PG3:
         with c.copy(f"COPY {tname} ({','.join(columns)}) FROM STDIN") as copy:
-            while data := fr.read(4096):
+            while data := fr.read(65536):
                 copy.write(data)
+    else:
+        c.copy_from(fr, tname, size=65536, columns=columns)
 
 
 def copy_from(
