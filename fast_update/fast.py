@@ -1,12 +1,16 @@
 from weakref import WeakKeyDictionary
-from django.db import transaction, models, connections
+from django.db import connections
+from django.db.transaction import atomic
+from django.db.models import QuerySet, Model
 from django.db.models.functions import Cast
 from django.db.models.expressions import Col
+from django.db.models.sql import UpdateQuery
 from operator import attrgetter
+from .update import flat_update, group_fields
 
 # typing imports
 from django.db.models import Field
-from typing import Callable, Dict, Iterable, List, Sequence, Any, Tuple, Union, cast
+from typing import Callable, Dict, List, Sequence, Any, Tuple, Union, cast, Optional
 from django.db.models.sql.compiler import SQLCompiler
 from django.db.backends.utils import CursorWrapper
 from django.db.backends.base.base import BaseDatabaseWrapper
@@ -70,12 +74,26 @@ prepare_data function:
 """
 
 
+# fast update implementation types
+SQLFunction = Callable[[str, str, Sequence[Field], List[List[str]], SQLCompiler, BaseDatabaseWrapper], str]
+PrepareFunction = Callable[[List[Any], int, int], List[Any]]
+CheckResult = Tuple[SQLFunction, Optional[PrepareFunction]]
+CheckFunction = Callable[[BaseDatabaseWrapper], CheckResult]
+Registry = Dict[BaseDatabaseWrapper, Union[CheckResult, Tuple]]
+
+
 # Fast update implementations for postgres, sqlite and mysql.
 
 
-def pq_cast(tname: str, field: Field, compiler: SQLCompiler, connection: Any) -> str:
-    """Column type cast for postgres."""
-    # TODO: compare to as_postgresql in v4
+def pq_cast(
+    tname: str,
+    field: Field,
+    compiler: SQLCompiler,
+    connection: Any
+) -> str:
+    """
+    Column type cast for postgres.
+    """
     return Cast(Col(tname, field), output_field=field).as_sql(compiler, connection)[0]
 
 
@@ -83,7 +101,7 @@ def as_postgresql(
     tname: str,
     pkname: str,
     fields: Sequence[Field],
-    placeholders: List[str],
+    placeholders: List[List[str]],
     compiler: SQLCompiler,
     connection: BaseDatabaseWrapper
 ) -> str:
@@ -108,7 +126,7 @@ def as_sqlite(
     tname: str,
     pkname: str,
     fields: Sequence[Field],
-    placeholders: List[str],
+    placeholders: List[List[str]],
     compiler: SQLCompiler,
     connection: BaseDatabaseWrapper
 ) -> str:
@@ -129,7 +147,7 @@ def as_sqlite_cte(
     tname: str,
     pkname: str,
     fields: Sequence[Field],
-    placeholders: List[str],
+    placeholders: List[List[str]],
     compiler: SQLCompiler,
     connection: BaseDatabaseWrapper
 ) -> str:
@@ -167,7 +185,11 @@ def as_sqlite_cte(
     )
 
 
-def prepare_data_sqlite_cte(data, width, height):
+def prepare_data_sqlite_cte(
+    data: List[Any],
+    width: int,
+    height: int
+) -> List[Any]:
     return data + [data[i] for i in range(0, len(data), width)]
 
 
@@ -175,7 +197,7 @@ def as_mysql(
     tname: str,
     pkname: str,
     fields: Sequence[Field],
-    placeholders: List[str],
+    placeholders: List[List[str]],
     compiler: SQLCompiler,
     connection: BaseDatabaseWrapper
 ) -> str:
@@ -210,12 +232,13 @@ def as_mysql(
 
 
 # memorize fast_update vendor on connection object
-SEEN_CONNECTIONS = cast(Dict[BaseDatabaseWrapper, str], WeakKeyDictionary())
-CHECKER = {}
+SEEN_CONNECTIONS = cast(Registry, WeakKeyDictionary())
+CHECKER: Dict[str, CheckFunction] = {}
+
 
 def register_implementation(
     vendor: str,
-    func: Callable[[BaseDatabaseWrapper], Tuple[Any]]
+    func: CheckFunction
 ) -> None:
     """
     Register fast update implementation for db vendor.
@@ -229,7 +252,7 @@ def register_implementation(
     CHECKER[vendor] = func
 
 
-def get_impl(conn: BaseDatabaseWrapper) -> str:
+def get_impl(conn: BaseDatabaseWrapper):
     """
     Try to get a fast update implementation for `conn`.
     Calls once the check function of `register_implementation` and
@@ -312,66 +335,78 @@ def update_from_values(
     return rows_updated
 
 
-def fast_update(
-    qs: models.QuerySet,
-    objs: Sequence[models.Model],
-    fieldnames: Iterable[str],
-    batch_size: Union[int, None]
+def _fast_update(
+    qs: QuerySet,
+    objs: Sequence[Model],
+    fieldnames: List[str],
+    batch_size: Union[int, None],
+    connection: BaseDatabaseWrapper
 ) -> int:
     qs._for_write = True
-    conn = connections[qs.db]
     model = qs.model
 
-    ## fall back to bulk_update if we dont have a working fast_update impl
-    if not get_impl(conn):  # pragma: no cover
-        return qs.bulk_update(objs, fieldnames, batch_size)
-
-    # filter all non model local fields --> still handled by bulk_update
-    non_local_fieldnames = []
-    local_fieldnames = []
-    for fieldname in fieldnames:
-        if model._meta.get_field(fieldname) not in model._meta.local_fields:
-            non_local_fieldnames.append(fieldname)
-        else:
-            local_fieldnames.append(fieldname)
-
-    if not local_fieldnames:
-        return qs.bulk_update(objs, non_local_fieldnames, batch_size)
-    
     # prepare all needed arguments for update
-    max_batch_size = conn.ops.bulk_batch_size(['pk'] + local_fieldnames, objs)
+    max_batch_size = connection.ops.bulk_batch_size(['pk'] + fieldnames, objs)
     batch_size_adjusted = min(batch_size or 2 ** 31, max_batch_size)
-    fields = [model._meta.get_field(f) for f in local_fieldnames]
+    fields = [model._meta.get_field(f) for f in fieldnames]
     pk_field = model._meta.pk
     get = attrgetter(pk_field.attname, *(f.attname for f in fields))
     prep_save = [pk_field.get_db_prep_save] + [f.get_db_prep_save for f in fields]
-    compiler = models.sql.UpdateQuery(model).get_compiler(conn.alias)
+    compiler = UpdateQuery(model).get_compiler(connection.alias)
+    table = model._meta.db_table
     
     rows_updated = 0
-    with transaction.atomic(using=conn.alias, savepoint=False):
+    with connection.cursor() as cursor:
         # update data either batched or in one go
-        with conn.cursor() as c:
-            data = []
-            counter = 0
-            for o in objs:
-                counter += 1
-                data += [p(v, conn) for p, v in zip(prep_save, get(o))]
-                if counter >= batch_size_adjusted:
-                    rows_updated += update_from_values(
-                        c, model._meta.db_table, pk_field, fields,
-                        counter, data, compiler, conn
-                    )
-                    data = []
-                    counter = 0
-            if data:
+        data = []
+        counter = 0
+        for o in objs:
+            counter += 1
+            data += [prep(value, connection) for prep, value in zip(prep_save, get(o))]
+            if counter >= batch_size_adjusted:
                 rows_updated += update_from_values(
-                    c, model._meta.db_table, pk_field, fields,
-                    counter, data, compiler, conn
+                    cursor, table, pk_field, fields,
+                    counter, data, compiler, connection
                 )
-
-        # handle remaining non local fields (done by bulk_update for now)
-        if non_local_fieldnames:
-            _rows_updated = qs.bulk_update(objs, non_local_fieldnames, batch_size)
-            rows_updated = max(rows_updated, _rows_updated or 0)
-
+                data = []
+                counter = 0
+        if data:
+            rows_updated += update_from_values(
+                cursor, table, pk_field, fields,
+                counter, data, compiler, connection
+            )
     return rows_updated
+
+
+def fast_update(
+    qs: QuerySet,
+    objs: Sequence[Model],
+    fieldnames: Sequence[str],
+    batch_size: Union[int, None],
+    unfiltered: bool = False
+) -> int:
+    qs._for_write = True
+    connection: BaseDatabaseWrapper = connections[qs.db]
+
+    # fall back to flat_update if we dont have a working fast_update impl
+    if not get_impl(connection):  # pragma: no cover
+        return flat_update(qs, objs, fieldnames, unfiltered=unfiltered)
+
+    if not unfiltered and qs.query.where:
+        # prefiltering needs an extra db roundtrip
+        pks = set(qs.values_list('pk', flat=True))
+        objs = [o for o in objs if o.pk in pks]
+
+    rows_updated = 0
+    with atomic(using=qs.db, savepoint=False):
+        for model, local_fields in group_fields(qs.model, fieldnames).items():
+            if local_fields:
+                ru = _fast_update(
+                    model._base_manager.using(qs.db),
+                    objs,
+                    local_fields,
+                    batch_size,
+                    connection
+                )
+                rows_updated = max(rows_updated, ru)
+        return rows_updated

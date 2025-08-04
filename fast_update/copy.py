@@ -12,12 +12,26 @@ from django.db import connections, transaction, models
 from django.db.models.fields.related import RelatedField
 from django.contrib.postgres.fields import (HStoreField, ArrayField, IntegerRangeField,
     BigIntegerRangeField, DecimalRangeField, DateTimeRangeField, DateRangeField)
-from psycopg2.extras import Range
+from .update import group_fields
+from django.core.exceptions import ImproperlyConfigured
+
+
+try:
+    try:
+        from psycopg.types.range import Range
+        PG3 = True
+    except ImportError:
+        from psycopg2.extras import Range
+        PG3 = False
+except ImportError:
+    raise ImproperlyConfigured("Error loading psycopg2 or psycopg module")
+
 
 # typings imports
 from django.db.backends.utils import CursorWrapper
-from typing import Any, BinaryIO, Callable, Dict, Generic, Iterable, List, Optional, Sequence, Tuple, Type, TypeVar, Union
-from typing import cast
+from typing import (Any, BinaryIO, Callable, Dict, Generic, List, Optional,
+                    Sequence, Tuple, Type, TypeVar, Union, cast)
+
 
 EncoderProto = TypeVar("EncoderProto", bound=Callable[[Any, str, List[Any]], Any])
 
@@ -81,6 +95,15 @@ CONNECTION_ENCODINGS = {
     'WIN1257': 'cp1257',
     'WIN1258': 'cp1258',
 }
+
+
+def get_encoding(conn) -> str:
+    if PG3:
+        # psycopg3
+        return conn.info.encoding
+    else:
+        # psycopg2
+        return CONNECTION_ENCODINGS[conn.encoding]
 
 
 # NULL placeholder for COPY FROM
@@ -161,7 +184,7 @@ some_encoder.array_escape: bool = ...
 the field ``fname``. ``lazy`` is a context helper object for lazy encoders
 (see Lazy Encoder below).
 
-The return type should be a string in postgres' TEXT format. For proper escaping 
+The return type should be a string in postgres' TEXT format. For proper escaping
 the helper ``text_escape`` can be used. For None/nullish values ``NULL`` is predefined.
 It is also possible to return a python type directly, if it is known to translate
 correctly into the TEXT format from ``__str__`` output (some default encoders
@@ -426,7 +449,7 @@ def JsonOrNone(v: Any, fname: str, lazy: List[Any]):
 def Text(v: Any, fname: str, lazy: List[Any]):
     """
     Test and encode ``str``, raise for any other.
-    
+
     The encoder escapes characters as denoted in the postgres documentation
     for the TEXT format of COPY FROM.
     """
@@ -647,7 +670,8 @@ def array_factory(encoder, depth=1, null=False) -> FieldEncoder:
                 raise TypeError(f'expected type {list} or {tuple} for field "{fname}", got None')
             if isinstance(v, (list, tuple)):
                 # test for empty reduction
-                if is_empty_array(v):
+                # NOTE: PG3 now raises on unblanced empties
+                if is_empty_array(v) and not PG3:
                     return '{}'
                 # other than bulk_update we have to do the balance check in python to get
                 # a meaningful error, as postgres throws only an unspecific syntax error
@@ -762,13 +786,19 @@ def write_lazy(f: BinaryIO, data: bytearray, stack: List[Any]) -> None:
     f.write(m[idx:])
 
 
-def threaded_copy(
+def compat_copy_from(
     c: CursorWrapper,
     fr: BinaryIO,
     tname: str,
     columns: Tuple[str]
 ) -> None:
-    c.copy_from(fr, tname, size=65536, columns=columns)
+    """A copy_from operation compatible between psycopg2 and psycopg 3."""
+    if PG3:
+        with c.copy(f"COPY {tname} ({','.join(columns)}) FROM STDIN") as copy:
+            while data := fr.read(65536):
+                copy.write(data)
+    else:
+        c.copy_from(fr, tname, size=65536, columns=columns)
 
 
 def copy_from(
@@ -800,7 +830,7 @@ def copy_from(
                 fr = os.fdopen(r, 'rb')
                 fw = os.fdopen(w, 'wb')
                 t = Thread(
-                    target=threaded_copy,
+                    target=compat_copy_from,
                     args=[c.connection.cursor(), fr, tname, columns]
                 )
                 t.start()
@@ -839,11 +869,11 @@ def copy_from(
             f.seek(0)
         else:
             f = BytesIO(payload)
-        c.copy_from(f, tname, size=65536, columns=columns)
+        compat_copy_from(c, f, tname, columns)
         f.close()
 
 
-def create_columns(column_def: Tuple[str, str]) -> str:
+def create_columns(column_def: Tuple[Tuple[str, str], ...]) -> str:
     """
     Prepare columns for table create as follows:
     - types copied from target table
@@ -856,39 +886,28 @@ def create_columns(column_def: Tuple[str, str]) -> str:
     )
 
 
-def update_sql(
+def update_from_table(
     tname: str,
-    temp_table: str,
+    tmp_table: str,
     pkname: str,
-    copy_fields: List[models.Field]
+    temp_pkname: str,
+    columns: List[str]
 ) -> str:
-    cols = ','.join(f'"{f.column}"="{temp_table}"."{f.column}"' for f in copy_fields)
-    where = f'"{tname}"."{pkname}"="{temp_table}"."{pkname}"'
-    return f'UPDATE "{tname}" SET {cols} FROM "{temp_table}" WHERE {where}'
+    cols = ','.join(f'"{col}"="{tmp_table}"."{col}"' for col in columns)
+    where = f'"{tname}"."{pkname}"="{tmp_table}"."{temp_pkname}"'
+    return f'UPDATE "{tname}" SET {cols} FROM "{tmp_table}" WHERE {where}'
 
 
 def copy_update(
     qs: models.QuerySet,
     objs: Sequence[models.Model],
-    fieldnames: Iterable[str],
+    local_fieldnames: Sequence[str],
     field_encoders: Optional[Dict[str, Any]] = None,
     encoding: Optional[str] = None
 ) -> int:
     qs._for_write = True
     conn = connections[qs.db]
     model = qs.model
-
-    # filter all non model local fields --> still handled by bulk_update
-    non_local_fieldnames = []
-    local_fieldnames = []
-    for fieldname in fieldnames:
-        if model._meta.get_field(fieldname) not in model._meta.local_fields:
-            non_local_fieldnames.append(fieldname)
-        else:
-            local_fieldnames.append(fieldname)
-
-    if not local_fieldnames:
-        return qs.bulk_update(objs, non_local_fieldnames)
 
     pk_field = model._meta.pk
     fields = [model._meta.get_field(fname) for fname in local_fieldnames]
@@ -901,11 +920,11 @@ def copy_update(
     get = attrgetter(*attnames)
     rows_updated = 0
     with transaction.atomic(using=conn.alias, savepoint=False), conn.cursor() as c:
-        temp = f'temp_cu_{model._meta.db_table}'
-        c.execute(f'DROP TABLE IF EXISTS "{temp}"')
-        c.execute(f'CREATE TEMPORARY TABLE "{temp}" ({create_columns(column_def)})')
-        copy_from(c, temp, objs, attnames, colnames, get, encs,
-            encoding or CONNECTION_ENCODINGS[c.connection.encoding])
+        tmp_table = f'temp_cu_{model._meta.db_table}'
+        c.execute(f'DROP TABLE IF EXISTS "{tmp_table}"')
+        c.execute(f'CREATE TEMPORARY TABLE "{tmp_table}" ({create_columns(column_def)})')
+        copy_from(c, tmp_table, objs, attnames, colnames, get, encs,
+            encoding or get_encoding(c.connection))
         # optimization (~6x speedup in ./manage.py perf for 10 instances):
         # for small changesets ANALYZE is much more expensive than
         # a sequential scan of the temp table
@@ -913,14 +932,20 @@ def copy_update(
         # --> enable ANALYZE for >100 only (assuming rather big records
         #     for copy_update)
         if len(objs) > 100:
-            c.execute(f'ANALYZE "{temp}" ({pk_field.column})')
-        c.execute(update_sql(model._meta.db_table, temp, pk_field.column, fields))
-        rows_updated = c.rowcount
-        c.execute(f'DROP TABLE "{temp}"')
-
-        # handle remaining non local fields (done by bulk_update for now)
-        if non_local_fieldnames:
-            _rows_updated = qs.bulk_update(objs, non_local_fieldnames)
-            rows_updated = max(rows_updated, _rows_updated or 0)
-
+            c.execute(f'ANALYZE "{tmp_table}" ({pk_field.column})')
+        for local_model, local_fieldnames in group_fields(model, local_fieldnames).items():
+            if local_fieldnames:
+                real_pk_field = local_model._meta.pk
+                columns = [local_model._meta.get_field(fname).column for fname in local_fieldnames]
+                sql = update_from_table(
+                    local_model._meta.db_table,
+                    tmp_table,
+                    real_pk_field.column,
+                    pk_field.column,
+                    columns
+                )
+                c.execute(sql)
+                ru = c.rowcount
+                rows_updated = max(rows_updated, ru)
+        c.execute(f'DROP TABLE "{tmp_table}"')
     return rows_updated
