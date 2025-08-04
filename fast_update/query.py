@@ -180,6 +180,9 @@ class FastUpdateQuerySet(QuerySet):
         ``encoding`` overwrites the text encoding used in the COPY FROM transmission
         (default is psycopg's connection encoding).
 
+        Note that any prefiltering on the queryset is ignored, thus all objects given
+        will be updated.
+
         Returns the number of affected rows.
 
         NOTE: The underlying implementation is only a PoC and probably will be replaced
