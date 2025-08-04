@@ -42,7 +42,7 @@ so make sure not to feed something totally off).
 - MariaDB 10.2+
 - MySQL 5.7+
 
-For unsupported database backends or outdated versions `fast_update` will fall back to `bulk_update`.
+For unsupported database backends or outdated versions `fast_update` will fall back to `flat_update`.
 (It is possible to register fast update implementations for other db vendors with `register_implementation`.
 See `fast_update/fast.py` for more details.)
 
@@ -54,6 +54,9 @@ fields with `update` or `bulk_update` instead.
 Other than with `bulk_update` duplicates in a changeset are not allowed and will raise.
 This is mainly a safety guard to not let slip through duplicates, where the final update state
 would be undetermined or directly depend on the database's compatibility.
+
+By default `flat_update` will execute another SELECT query if the queryset is prefiltered.
+Set `unfiltered=True` if you want to skip the prefiltering.
 
 
 ### copy_update ###
@@ -68,8 +71,22 @@ argument (data is always transferred in one big batch). It can be used likewise 
 **Note** `copy_update` will probably never leave the alpha/PoC-state, as psycopg3 brings great COPY support,
 which does a more secure value conversion and has a very fast C-version.
 
-**Note** Django 4.2 brings psycopg3 support, which is currently not yet supported by `copy_update`.
-While psycopg2 will keep working as before, psycopg3 will raise on attempts to use `copy_update` until #16 got resolved.
+**Note** Django 4.2 brings psycopg3 support, which is now supported by `copy_update`.
+It still uses the old implementation, the transition to the faster psycopg3 copy interface is still pending.
+
+
+### flat_update & merged_update ###
+
+Since version 0.3.0 the package provides 2 new update implementations. Both use direct calls of
+the `update` method, which turns out to be much faster than `bulk_update` for local database installations
+(roughly 4x faster).
+
+While `flat_update` simply loops over the objects and calls `update` once with all field values applied,
+`merged_update` tries to create field value groups to lower the update calls, which will perform much better
+with highly intersecting data.
+
+Note that `merged_update` is currently ALPHA, as the merge details and the cost prediction still need
+some conceptual work and tests.
 
 
 ### Status ###
@@ -93,3 +110,13 @@ but it stays very steep compared to `fast_update`).
 For very big changesets `copy_update` is the clear winner, and even shows a substantial increase in updated rows/s
 (within my test range, as upper estimate this of course cannot grow slower than linear,
 as the data pumping will saturate to linear).
+
+
+### Changelog ###
+
+- 0.3.0 new beta release
+    - new update implementations:
+        - `flat_update`
+        - `merged_update` (ALPHA)
+    - dropped `bulk_update` as fallback
+    - psycopg3 support for `copy_update`
