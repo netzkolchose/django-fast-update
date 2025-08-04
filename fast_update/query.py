@@ -1,7 +1,7 @@
 from django.db import connections
 from django.db.models import QuerySet, Model, Manager
 from django.db.utils import NotSupportedError
-from typing import Any, Dict, Iterable, Optional, Type, Tuple
+from typing import Any, Dict, Iterable, Optional, Type, Tuple, Sequence
 
 from .fast import fast_update
 from .update import flat_update, merged_update
@@ -10,7 +10,7 @@ from .update import flat_update, merged_update
 def sanity_check(
     model: Type[Model],
     objs: Tuple[Model, ...],
-    fields: Iterable[str],
+    fields: Sequence[str],
     op: str,
     batch_size: Optional[int] = None
 ) -> None:
@@ -24,6 +24,8 @@ def sanity_check(
         raise ValueError(f'{op}() cannot update duplicates.')
     if None in pks:
         raise ValueError(f'All {op}() objects must have a primary key set.')
+    if len(set(fields)) < len(fields):
+        raise ValueError(f'{op}() has duplicated fieldnames.')
     fields_ = [model._meta.get_field(name) for name in fields]
     if any(not f.concrete or f.many_to_many for f in fields_):
         raise ValueError(f'{op}() can only be used with concrete fields.')
@@ -32,6 +34,7 @@ def sanity_check(
     for obj in objs:
         # TODO: This is really heavy in the runtime books, any elegant way to speedup?
         # TODO: django main has an additional argument 'fields' (saves some runtime?)
+        # FIXME: although this is fixed upstream we still cannot use the fields argument
         obj._prepare_related_fields_for_save(operation_name=op)
         # additionally raise on f-expression
         for field in fields_:
@@ -75,11 +78,7 @@ class FastUpdateQuerySet(QuerySet):
         if not objs:
             return 0
         objs = tuple(objs)
-        # FIXME: this needs a better handling:
-        # - raise on duplicate field entries
-        # - pass down a sequence type (list)
-        # . change all impls to expect a list
-        fields = list(set(fields or []))
+        fields = tuple(fields or [])
         sanity_check(self.model, objs, fields, 'fast_update', batch_size)
         return fast_update(self, objs, fields, batch_size, unfiltered)
 
@@ -113,7 +112,7 @@ class FastUpdateQuerySet(QuerySet):
         if not objs:
             return 0
         objs = tuple(objs)
-        fields = list(set(fields or []))
+        fields = tuple(fields or [])
         sanity_check(self.model, objs, fields, 'merged_update', batch_size)
         return merged_update(self, objs, fields, unfiltered=unfiltered)
 
@@ -145,7 +144,7 @@ class FastUpdateQuerySet(QuerySet):
         if not objs:
             return 0
         objs = tuple(objs)
-        fields = list(set(fields or []))
+        fields = tuple(fields or [])
         sanity_check(self.model, objs, fields, 'flat_update', batch_size)
         return flat_update(self, objs, fields, unfiltered=unfiltered)
 
@@ -195,7 +194,7 @@ class FastUpdateQuerySet(QuerySet):
         if not objs:
             return 0
         objs = tuple(objs)
-        fields = set(fields or [])
+        fields = tuple(fields or [])
         sanity_check(self.model, objs, fields, 'copy_update')
         return copy_update(self, objs, fields, field_encoders, encoding)
     
