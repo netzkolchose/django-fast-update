@@ -76,7 +76,7 @@ While psycopg2 will keep working as before, psycopg3 will raise on attempts to u
 
 Currently beta, still some TODOs left.
 
-The whole package is tested with Django 3.2 & 4.2 on Python 3.8 & 3.11.
+The package is tested with Django 3.2, 4.2 & 5.2 on Python 3.8 to 3.13.
 
 
 ### Performance ###

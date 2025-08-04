@@ -5,6 +5,7 @@ import uuid
 from math import isnan
 from unittest import skipUnless
 from django.test import TestCase
+from parameterized import parameterized
 from django.db import connection
 from django.db.models import F
 from django.test.utils import CaptureQueriesContext
@@ -87,8 +88,16 @@ EXAMPLE = {
 FIELDS = tuple(EXAMPLE.keys())
 
 
+UPDATE_IMPLS = [
+    ['fast_update'],
+    ['flat_update'],
+    ['merged_update'],
+]
+
+
 class TestLocalFields(TestCase):
-    def test_singles(self):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_singles(self, update_impl):
         for fieldname, values in SINGLES.items():
             for value in values:
                 FieldUpdate.objects.all().delete()
@@ -97,45 +106,49 @@ class TestLocalFields(TestCase):
                 update_a = FieldUpdate(pk=a.pk, **{fieldname: value})
                 update_b = FieldUpdate(pk=b.pk, **{fieldname: value})
                 FieldUpdate.objects.bulk_update([update_a], [fieldname])
-                FieldUpdate.objects.fast_update([update_b], [fieldname])
+                getattr(FieldUpdate.objects, update_impl)([update_b], [fieldname])
                 res_a, res_b = FieldUpdate.objects.all().values(fieldname)
                 self.assertEqual(res_b[fieldname], res_a[fieldname])
 
+    @parameterized.expand(UPDATE_IMPLS)
     @skipUnless(connection.vendor == 'postgresql', 'postgres only tests')
-    def test_inf(self):
+    def test_inf(self, update_impl):
         a = FieldUpdate.objects.create()
         b = FieldUpdate.objects.create()
         update_a = FieldUpdate(pk=a.pk, f_float=float('inf'))
         update_b = FieldUpdate(pk=b.pk, f_float=float('inf'))
         FieldUpdate.objects.bulk_update([update_a], ['f_float'])
-        FieldUpdate.objects.fast_update([update_b], ['f_float'])
+        getattr(FieldUpdate.objects, update_impl)([update_b], ['f_float'])
         res_a, res_b = FieldUpdate.objects.all().values('f_float')
         self.assertEqual(res_b['f_float'], res_a['f_float'])
     
+    @parameterized.expand(UPDATE_IMPLS)
     @skipUnless(connection.vendor == 'postgresql', 'postgres only tests')
-    def test_nan(self):
+    def test_nan(self, update_impl):
         a = FieldUpdate.objects.create()
         b = FieldUpdate.objects.create()
         update_a = FieldUpdate(pk=a.pk, f_float=float('NaN'))
         update_b = FieldUpdate(pk=b.pk, f_float=float('NaN'))
         FieldUpdate.objects.bulk_update([update_a], ['f_float'])
-        FieldUpdate.objects.fast_update([update_b], ['f_float'])
+        getattr(FieldUpdate.objects, update_impl)([update_b], ['f_float'])
         res_a, res_b = FieldUpdate.objects.all().values('f_float')
         self.assertEqual(isnan(res_a['f_float']), True)
         self.assertEqual(isnan(res_b['f_float']), True)
 
-    def test_updatefull(self):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_updatefull(self, update_impl):
         a = FieldUpdate.objects.create()
         b = FieldUpdate.objects.create()
         update_a = FieldUpdate(pk=a.pk, **EXAMPLE)
         update_b = FieldUpdate(pk=b.pk, **EXAMPLE)
         FieldUpdate.objects.bulk_update([update_a], FIELDS)
-        FieldUpdate.objects.fast_update([update_b], FIELDS)
+        getattr(FieldUpdate.objects, update_impl)([update_b], FIELDS)
         res_a, res_b = FieldUpdate.objects.all().values(*FIELDS)
         for f in FIELDS:
             self.assertEqual(res_b[f], res_a[f])
 
-    def test_updatefull_multiple(self):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_updatefull_multiple(self, update_impl):
         a = []
         b = []
         for _ in range(100):
@@ -148,7 +161,7 @@ class TestLocalFields(TestCase):
         for _b in b:
             update_b.append(FieldUpdate(pk=_b.pk, **EXAMPLE))
         FieldUpdate.objects.bulk_update(update_a, FIELDS)
-        FieldUpdate.objects.fast_update(update_b, FIELDS)
+        getattr(FieldUpdate.objects, update_impl)(update_b, FIELDS)
         results = list(FieldUpdate.objects.all().values(*FIELDS))
         first = results[0]
         for r in results[1:]:
@@ -158,13 +171,14 @@ class TestLocalFields(TestCase):
 
 @skipUnless(connection.vendor == 'mysql', 'mysql only tests')
 class TestPlaceholderCall(TestCase):
-    def test_mysql_binary(self):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_mysql_binary(self, update_impl):
         # currently only BinaryField uses a custom placeholder for mysql as '_binary %s',
         # thus we scan for '_binary ' in the sent sql
         b = FieldUpdate.objects.create()
         update_b = FieldUpdate(pk=b.pk, **EXAMPLE)
         with CaptureQueriesContext(connection) as capture:
-            FieldUpdate.objects.fast_update([update_b], FIELDS)
+            getattr(FieldUpdate.objects, update_impl)([update_b], FIELDS)
         queries = capture.captured_queries
         self.assertEqual(len(queries), 1)
         sql = queries[0]['sql']
@@ -173,29 +187,34 @@ class TestPlaceholderCall(TestCase):
 
 
 class TestForeignkeyField(TestCase):
-    def test_move_parents(self):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_move_parents(self, update_impl):
         childA = Child.objects.create()
         childB = Child.objects.create()
         parents = [Parent.objects.create(child=childA) for _ in range(10)]
         # move objs
         for parent in parents:
             parent.child = childB
-        Parent.objects.fast_update(parents, fields=['child'])
+        getattr(Parent.objects, update_impl)(parents, fields=['child'])
         for obj in Parent.objects.all():
             self.assertEqual(obj.child, childB)
 
-    def test_django_bug_33322(self):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_django_bug_33322(self, update_impl):
         # https://code.djangoproject.com/ticket/33322
         parent = Parent.objects.create(child=None)
         parent.child = Child()
         parent.child.save()
-        Parent.objects.fast_update([parent], fields=['child'])
+        getattr(Parent.objects, update_impl)([parent], fields=['child'])
+        # seems to be fixed upstream, but does not work for us?
+        #Parent.objects.bulk_update([parent], ['child'])
         self.assertEqual(parent.child_id, parent.child.pk)
         self.assertEqual(Parent.objects.get(pk=parent.pk).child_id, parent.child.pk)
 
 
 class TestRaiseOnExpressions(TestCase):
-    def test_expressions(self):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_expressions(self, update_impl):
         values = [
             F('f_biginteger'),
             F('f_biginteger') + 1,
@@ -206,8 +225,8 @@ class TestRaiseOnExpressions(TestCase):
             setattr(obj, 'f_integer', value)
             self.assertRaisesMessage(
                 ValueError,
-                'fast_update() cannot be used with f-expressions.',
-                lambda : FieldUpdate.objects.fast_update([obj], ['f_integer'])
+                update_impl + '() cannot be used with f-expressions.',
+                lambda : getattr(FieldUpdate.objects, update_impl)([obj], ['f_integer'])
             )
         self.assertEqual(
             FieldUpdate.objects.all().values_list('f_integer', 'f_biginteger', 'f_smallinteger')[0],
@@ -221,36 +240,39 @@ class TestRaiseOnExpressions(TestCase):
 
 
 class TestNonlocalFields(TestCase):
-    def test_local_nonlocal_mixed(self):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_local_nonlocal_mixed(self, update_impl):
         objs = [MultiSub.objects.create() for _ in range(10)]
         for i, obj in enumerate(objs):
             obj.b1 = i
             obj.b2 = i * 10
             obj.s1 = i * 100
             obj.s2 = i * 1000
-        MultiSub.objects.fast_update(objs, ['b1', 'b2', 's1', 's2'])
+        getattr(MultiSub.objects, update_impl)(objs, ['b1', 'b2', 's1', 's2'])
         self.assertEqual(
             list(MultiSub.objects.all().values_list('b1', 'b2', 's1', 's2').order_by('pk')),
             [(i, i*10, i*100, i*1000) for i in range(10)]
         )
-    
-    def test_nonlocal_only(self):
+
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_nonlocal_only(self, update_impl):
         objs = [MultiSub.objects.create() for _ in range(10)]
         for i, obj in enumerate(objs):
             obj.b1 = i
             obj.b2 = i * 10
-        MultiSub.objects.fast_update(objs, ['b1', 'b2'])
+        getattr(MultiSub.objects, update_impl)(objs, ['b1', 'b2'])
         self.assertEqual(
             list(MultiSub.objects.all().values_list('b1', 'b2', 's1', 's2').order_by('pk')),
             [(i, i*10, None, None) for i in range(10)]
         )
 
-    def test_local_only(self):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_local_only(self, update_impl):
         objs = [MultiSub.objects.create() for _ in range(10)]
         for i, obj in enumerate(objs):
             obj.s1 = i * 100
             obj.s2 = i * 1000
-        MultiSub.objects.fast_update(objs, ['s1', 's2'])
+        getattr(MultiSub.objects, update_impl)(objs, ['s1', 's2'])
         self.assertEqual(
             list(MultiSub.objects.all().values_list('b1', 'b2', 's1', 's2').order_by('pk')),
             [(None, None, i*100, i*1000) for i in range(10)]
@@ -263,60 +285,139 @@ class TestSanityChecks(TestCase):
             FieldUpdate.objects.create(**EXAMPLE),
             FieldUpdate.objects.create(**EXAMPLE)
         ]
-    
-    def test_sanity_checks(self):
+
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_sanity_checks(self, update_impl):
         # negative batch_size
         self.assertRaisesMessage(
             ValueError,
             'Batch size must be a positive integer.',
-            lambda : FieldUpdate.objects.fast_update(self.instances, ['f_char'], batch_size=-10)
+            lambda : getattr(FieldUpdate.objects, update_impl)(self.instances, ['f_char'], batch_size=-10)
         )
         # no fieldnames
         self.assertRaisesMessage(
             ValueError,
-            'Field names must be given to fast_update().',
-            lambda : FieldUpdate.objects.fast_update(self.instances, [])
+            f'Field names must be given to {update_impl}().',
+            lambda : getattr(FieldUpdate.objects, update_impl)(self.instances, [])
         )
         self.assertRaisesMessage(
             ValueError,
-            'Field names must be given to fast_update().',
-            lambda : FieldUpdate.objects.fast_update(self.instances, fields=None)
+            f'Field names must be given to {update_impl}().',
+            lambda : getattr(FieldUpdate.objects, update_impl)(self.instances, fields=None)
         )
         # no objs
-        self.assertEqual(FieldUpdate.objects.fast_update([], ['f_char']), 0)
+        self.assertEqual(getattr(FieldUpdate.objects, update_impl)([], ['f_char']), 0)
         # objs with no pk
         self.assertRaisesMessage(
             ValueError,
-            'All fast_update() objects must have a primary key set.',
-            lambda : FieldUpdate.objects.fast_update([FieldUpdate(**EXAMPLE)], ['f_char'])
+            f'All {update_impl}() objects must have a primary key set.',
+            lambda : getattr(FieldUpdate.objects, update_impl)([FieldUpdate(**EXAMPLE)], ['f_char'])
         )
         # non concrete field
         mbase = MultiBase.objects.create()
         self.assertRaisesMessage(
             ValueError,
-            'fast_update() can only be used with concrete fields.',
-            lambda : MultiBase.objects.fast_update([mbase], ['multisub'])
+            f'{update_impl}() can only be used with concrete fields.',
+            lambda : getattr(MultiBase.objects, update_impl)([mbase], ['multisub'])
         )
         # pk in fields
         self.assertRaisesMessage(
             ValueError,
-            'fast_update() cannot be used with primary key fields.',
-            lambda : FieldUpdate.objects.fast_update(self.instances, ['f_char', 'id'])
+            f'{update_impl}() cannot be used with primary key fields.',
+            lambda : getattr(FieldUpdate.objects, update_impl)(self.instances, ['f_char', 'id'])
         )
 
 
 class TestDuplicates(TestCase):
-    def test_raise_on_duplicates(self):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_raise_on_duplicates(self, update_impl):
         a = FieldUpdate.objects.create()
         with self.assertRaisesMessage(ValueError, 'cannot update duplicates'):
-            FieldUpdate.objects.fast_update([
+            getattr(FieldUpdate.objects, update_impl)([
                 FieldUpdate(pk=a.pk),
                 FieldUpdate(pk=a.pk)
             ], FIELDS)
 
-    def test_no_pk_duplicates(self):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_no_pk_duplicates(self, update_impl):
         with self.assertRaisesMessage(ValueError, 'cannot update duplicates'):
-            FieldUpdate.objects.fast_update([
+            getattr(FieldUpdate.objects, update_impl)([
                 FieldUpdate(),
                 FieldUpdate()
             ], FIELDS)
+
+
+class TestPrefiltering(TestCase):
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_filter_sametable(self, update_impl):
+        a = MultiSub.objects.create(s1=1)
+        b = MultiSub.objects.create(s1=10)
+        c = MultiSub.objects.create(s1=100)
+        objs = [a, b, c]
+
+        # filtering
+        for i, o in enumerate(objs):
+            o.s2 = i + 10
+            o.b2 = i + 10
+        getattr(MultiSub.objects.filter(s1__gt=9), update_impl)(objs, ['s2', 'b2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().order_by('pk').values_list('s2', 'b2')),
+            [(None, None), (11, 11), (12, 12)]
+        )
+
+        # excluding
+        for i, o in enumerate(objs):
+            o.s2 = (i + 5) * 100
+            o.b2 = (i + 5) * 100
+        getattr(MultiSub.objects.exclude(s1=10), update_impl)(objs, ['s2', 'b2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().order_by('pk').values_list('s2', 'b2')),
+            [(500, 500), (11, 11), (700, 700)]
+        )
+
+        # unfiltered should apply to all
+        for i, o in enumerate(objs):
+            o.s2 = -i
+            o.b2 = -i
+        getattr(MultiSub.objects.filter(s1__gt=9), update_impl)(objs, ['s2', 'b2'], unfiltered=True)
+        self.assertEqual(
+            list(MultiSub.objects.all().order_by('pk').values_list('s2', 'b2')),
+            [(0, 0), (-1, -1), (-2, -2)]
+        )
+
+    @parameterized.expand(UPDATE_IMPLS)
+    def test_filter_mt_othertable(self, update_impl):
+        a = MultiSub.objects.create(b1=1)
+        b = MultiSub.objects.create(b1=10)
+        c = MultiSub.objects.create(b1=100)
+        objs = [a, b, c]
+
+        # filtering
+        for i, o in enumerate(objs):
+            o.s2 = i + 10
+            o.b2 = i + 10
+        getattr(MultiSub.objects.filter(b1__gt=9), update_impl)(objs, ['s2', 'b2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().order_by('pk').values_list('s2', 'b2')),
+            [(None, None), (11, 11), (12, 12)]
+        )
+
+        # excluding
+        for i, o in enumerate(objs):
+            o.s2 = (i + 5) * 100
+            o.b2 = (i + 5) * 100
+        getattr(MultiSub.objects.exclude(b1=10), update_impl)(objs, ['s2', 'b2'])
+        self.assertEqual(
+            list(MultiSub.objects.all().order_by('pk').values_list('s2', 'b2')),
+            [(500, 500), (11, 11), (700, 700)]
+        )
+
+        # unfiltered should apply to all
+        for i, o in enumerate(objs):
+            o.s2 = -i
+            o.b2 = -i
+        getattr(MultiSub.objects.filter(b1__gt=9), update_impl)(objs, ['s2', 'b2'], unfiltered=True)
+        self.assertEqual(
+            list(MultiSub.objects.all().order_by('pk').values_list('s2', 'b2')),
+            [(0, 0), (-1, -1), (-2, -2)]
+        )

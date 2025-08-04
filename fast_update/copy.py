@@ -12,17 +12,19 @@ from django.db import connections, transaction, models
 from django.db.models.fields.related import RelatedField
 from django.contrib.postgres.fields import (HStoreField, ArrayField, IntegerRangeField,
     BigIntegerRangeField, DecimalRangeField, DateTimeRangeField, DateRangeField)
-
 from django.db import connection
 if connection.Database.__version__ > '3':
     from psycopg.types.range import Range
 else:
     from psycopg2.extras import Range
+from .update import group_fields
+
 
 # typings imports
 from django.db.backends.utils import CursorWrapper
-from typing import Any, BinaryIO, Callable, Dict, Generic, Iterable, List, Optional, Sequence, Tuple, Type, TypeVar, Union
-from typing import cast
+from typing import (Any, BinaryIO, Callable, Dict, Generic, Iterable, List, Optional,
+                    Sequence, Tuple, Type, TypeVar, Union, cast)
+
 
 EncoderProto = TypeVar("EncoderProto", bound=Callable[[Any, str, List[Any]], Any])
 
@@ -861,7 +863,7 @@ def copy_from(
         f.close()
 
 
-def create_columns(column_def: Tuple[str, str]) -> str:
+def create_columns(column_def: Tuple[Tuple[str, str], ...]) -> str:
     """
     Prepare columns for table create as follows:
     - types copied from target table
@@ -874,39 +876,28 @@ def create_columns(column_def: Tuple[str, str]) -> str:
     )
 
 
-def update_sql(
+def update_from_table(
     tname: str,
-    temp_table: str,
+    tmp_table: str,
     pkname: str,
-    copy_fields: List[models.Field]
+    temp_pkname: str,
+    columns: List[str]
 ) -> str:
-    cols = ','.join(f'"{f.column}"="{temp_table}"."{f.column}"' for f in copy_fields)
-    where = f'"{tname}"."{pkname}"="{temp_table}"."{pkname}"'
-    return f'UPDATE "{tname}" SET {cols} FROM "{temp_table}" WHERE {where}'
+    cols = ','.join(f'"{col}"="{tmp_table}"."{col}"' for col in columns)
+    where = f'"{tname}"."{pkname}"="{tmp_table}"."{temp_pkname}"'
+    return f'UPDATE "{tname}" SET {cols} FROM "{tmp_table}" WHERE {where}'
 
 
 def copy_update(
     qs: models.QuerySet,
     objs: Sequence[models.Model],
-    fieldnames: Iterable[str],
+    local_fieldnames: Sequence[str],
     field_encoders: Optional[Dict[str, Any]] = None,
     encoding: Optional[str] = None
 ) -> int:
     qs._for_write = True
     conn = connections[qs.db]
     model = qs.model
-
-    # filter all non model local fields --> still handled by bulk_update
-    non_local_fieldnames = []
-    local_fieldnames = []
-    for fieldname in fieldnames:
-        if model._meta.get_field(fieldname) not in model._meta.local_fields:
-            non_local_fieldnames.append(fieldname)
-        else:
-            local_fieldnames.append(fieldname)
-
-    if not local_fieldnames:
-        return qs.bulk_update(objs, non_local_fieldnames)
 
     pk_field = model._meta.pk
     fields = [model._meta.get_field(fname) for fname in local_fieldnames]
@@ -919,10 +910,10 @@ def copy_update(
     get = attrgetter(*attnames)
     rows_updated = 0
     with transaction.atomic(using=conn.alias, savepoint=False), conn.cursor() as c:
-        temp = f'temp_cu_{model._meta.db_table}'
-        c.execute(f'DROP TABLE IF EXISTS "{temp}"')
-        c.execute(f'CREATE TEMPORARY TABLE "{temp}" ({create_columns(column_def)})')
-        copy_from(c, temp, objs, attnames, colnames, get, encs,
+        tmp_table = f'temp_cu_{model._meta.db_table}'
+        c.execute(f'DROP TABLE IF EXISTS "{tmp_table}"')
+        c.execute(f'CREATE TEMPORARY TABLE "{tmp_table}" ({create_columns(column_def)})')
+        copy_from(c, tmp_table, objs, attnames, colnames, get, encs,
             encoding or get_encoding(c.connection))
         # optimization (~6x speedup in ./manage.py perf for 10 instances):
         # for small changesets ANALYZE is much more expensive than
@@ -931,14 +922,20 @@ def copy_update(
         # --> enable ANALYZE for >100 only (assuming rather big records
         #     for copy_update)
         if len(objs) > 100:
-            c.execute(f'ANALYZE "{temp}" ({pk_field.column})')
-        c.execute(update_sql(model._meta.db_table, temp, pk_field.column, fields))
-        rows_updated = c.rowcount
-        c.execute(f'DROP TABLE "{temp}"')
-
-        # handle remaining non local fields (done by bulk_update for now)
-        if non_local_fieldnames:
-            _rows_updated = qs.bulk_update(objs, non_local_fieldnames)
-            rows_updated = max(rows_updated, _rows_updated or 0)
-
+            c.execute(f'ANALYZE "{tmp_table}" ({pk_field.column})')
+        for local_model, local_fieldnames in group_fields(model, local_fieldnames).items():
+            if local_fieldnames:
+                real_pk_field = local_model._meta.pk
+                columns = [local_model._meta.get_field(fname).column for fname in local_fieldnames]
+                sql = update_from_table(
+                    local_model._meta.db_table,
+                    tmp_table,
+                    real_pk_field.column,
+                    pk_field.column,
+                    columns
+                )
+                c.execute(sql)
+                ru = c.rowcount
+                rows_updated = max(rows_updated, ru)
+        c.execute(f'DROP TABLE "{tmp_table}"')
     return rows_updated
