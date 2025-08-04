@@ -3,20 +3,16 @@ from setuptools import setup, find_packages
 with open('README.md', 'r') as f:
     long_description = f.read()
 
-def get_version(path):
-    with open(path) as f:
-        for line in f:
-            if line.startswith('__version__'):
-                delim = '"' if '"' in line else "'"
-                return line.split(delim)[1]
-        raise RuntimeError('Unable to find version string.')
+def get_version():
+    import fast_update
+    return fast_update.__version__
 
 setup(
     name='django-fast-update',
     packages=find_packages(exclude=['example']),
     include_package_data=True,
-    install_requires=['Django>=3.2'],
-    version=get_version('fast_update/__init__.py'),
+    install_requires=['Django>=4.2'],
+    version=get_version(),
     license='MIT',
     description='Faster db updates for Django using UPDATE FROM VALUES sql variants.',
     long_description=long_description,
@@ -24,7 +20,7 @@ setup(
     author='netzkolchose',
     author_email='j.breitbart@netzkolchose.de',
     url='https://github.com/netzkolchose/django-fast-update',
-    download_url='https://github.com/netzkolchose/django-fast-update/archive/v0.2.4.tar.gz',
+    download_url=f'https://github.com/netzkolchose/django-fast-update/archive/v{get_version()}.tar.gz',
     keywords=['django', 'bulk_update', 'fast', 'update', 'fast_update'],
     classifiers=[
         'Development Status :: 4 - Beta',
