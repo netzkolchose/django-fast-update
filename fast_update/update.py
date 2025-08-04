@@ -1,10 +1,10 @@
 from collections import defaultdict
 from operator import attrgetter
-from django.db.models import QuerySet
+from django.db.models import QuerySet, Model
 from django.db.transaction import atomic
 import math
 
-from typing import Sequence, Any, List, Callable
+from typing import Sequence, Any, List, Callable, Dict, FrozenSet, Type
 
 
 """
@@ -59,8 +59,8 @@ def predictor(objs, fields, merged_updates, residues):
 def _flat(
     qs: QuerySet,
     objs: Sequence[Any],
-    fields: List[str]
-) -> None:
+    fields: Sequence[str]
+) -> int:
     qs._for_write = True
     get_values = attrgetter(*fields)
     rows_updated = 0
@@ -77,10 +77,39 @@ def _flat(
 
 def _merge_values(
     objs: Sequence[Any],
-    fields: List[str]
+    fields: Sequence[str]
 ):
-    merged_pks = defaultdict(lambda: defaultdict(list))
-    flat_residues = defaultdict(dict)
+    """
+    This is a first straight-forward attempt to merge updates
+    into pk groups, that form directly from the values.
+
+    A better attempt would take value selectivity into account
+    and expand pk sets with high intersections to form updates
+    covering a superset. Example:
+        f1.A has a selectivity of 1% (99% of all pks)
+        f2.B has a selectivity of 2% (98% of all pks)
+    Here it is more efficient, to apply these values with a
+    superset containing all pks:
+        - update f1.A | f2.B (expanded to all pks)
+        - update !f1.A
+        - update !f2.B
+    This introduces update order dependencies. Currently
+    the merger does this instead:
+        - update f1.A
+        - update f2.B
+        - update !f1.A
+        - update !f2.B
+    which has no specific update order.
+
+    The same principle applies to higher selectivity groups
+    with high intersections (that is the real metric behind).
+    But for those to find the right supersets while respecting
+    the update order has exponential complexity (best solution
+    invalidates all previous groups, we prolly could lower that
+    to quadratic by a close enough guess without invalidation).
+    """
+    merged_pks: Dict[str, Dict[Any, List[Any]]] = defaultdict(lambda: defaultdict(list))
+    flat_residues: Dict[Any, Dict[str, Any]] = defaultdict(dict)
 
     # 1. aggregate pks under equal hashable values
     for fieldname in fields:
@@ -96,7 +125,7 @@ def _merge_values(
         # currently the full merge before prediction costs <10%
 
     # 2. aggregate fields under pk groups
-    merged_updates = defaultdict(dict)
+    merged_updates: Dict[FrozenSet[Any], Dict[str, Any]] = defaultdict(dict)
     for fieldname, pkdata in merged_pks.items():
         for value, pks in pkdata.items():
             if len(pks) == 1:
@@ -111,8 +140,8 @@ def _merge_values(
 def _merged(
     qs: QuerySet,
     objs: Sequence[Any],
-    fields: List[str]
-) -> None:
+    fields: Sequence[str]
+) -> int:
     qs._for_write = True
     
     merged_updates, flat_residues = _merge_values(objs, fields)
@@ -129,8 +158,11 @@ def _merged(
     return _flat(qs, objs, fields)
 
 
-def group_fields(model, fieldnames):
-    field_groups = defaultdict(list)
+def group_fields(
+    model: Type[Model],
+    fieldnames: Sequence[str]
+) -> Dict[Type[Model], List[str]]:
+    field_groups: Dict[Type[Model], List[str]] = defaultdict(list)
     field_groups[model]
     for fieldname in fieldnames:
         field = model._meta.get_field(fieldname)
@@ -139,12 +171,12 @@ def group_fields(model, fieldnames):
 
 
 def _update(
-    func: Callable[[QuerySet, Sequence[Any], List[str]], int],
+    func: Callable[[QuerySet, Sequence[Any], Sequence[str]], int],
     qs: QuerySet,
     objs: Sequence[Any],
     fieldnames: Sequence[str],
     unfiltered: bool = False
-) -> None:
+) -> int:
     qs._for_write = True
     rows_updated = 0
     with atomic(using=qs.db, savepoint=False):
@@ -162,7 +194,7 @@ def flat_update(
     objs: Sequence[Any],
     fieldnames: Sequence[str],
     unfiltered: bool = False
-) -> None:
+) -> int:
     return _update(_flat, qs, objs, fieldnames, unfiltered)
 
 
@@ -171,7 +203,7 @@ def merged_update(
     objs: Sequence[Any],
     fieldnames: Sequence[str],
     unfiltered: bool = False
-) -> None:
+) -> int:
     if len(objs) < 3:
         return _update(_flat, qs, objs, fieldnames, unfiltered)
     return _update(_merged, qs, objs, fieldnames, unfiltered)

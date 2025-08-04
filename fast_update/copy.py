@@ -16,8 +16,9 @@ from psycopg2.extras import Range
 
 # typings imports
 from django.db.backends.utils import CursorWrapper
-from typing import Any, BinaryIO, Callable, Dict, Generic, Iterable, List, Optional, Sequence, Tuple, Type, TypeVar, Union
-from typing import cast
+from typing import (Any, BinaryIO, Callable, Dict, Generic, Iterable, List, Optional,
+                    Sequence, Tuple, Type, TypeVar, Union, cast)
+
 
 EncoderProto = TypeVar("EncoderProto", bound=Callable[[Any, str, List[Any]], Any])
 
@@ -843,7 +844,7 @@ def copy_from(
         f.close()
 
 
-def create_columns(column_def: Tuple[str, str]) -> str:
+def create_columns(column_def: Tuple[Tuple[str, str], ...]) -> str:
     """
     Prepare columns for table create as follows:
     - types copied from target table

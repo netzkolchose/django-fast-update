@@ -1,7 +1,7 @@
 from django.db import connections
 from django.db.models import QuerySet, Model, Manager
 from django.db.utils import NotSupportedError
-from typing import Any, Dict, Iterable, Optional, Type
+from typing import Any, Dict, Iterable, Optional, Type, Tuple
 
 from .fast import fast_update
 from .update import flat_update, merged_update
@@ -9,7 +9,7 @@ from .update import flat_update, merged_update
 
 def sanity_check(
     model: Type[Model],
-    objs: Iterable[Model],
+    objs: Tuple[Model, ...],
     fields: Iterable[str],
     op: str,
     batch_size: Optional[int] = None
@@ -46,7 +46,7 @@ class FastUpdateQuerySet(QuerySet):
         objs: Iterable[Model],
         fields: Iterable[str],
         batch_size: Optional[int] = None,
-        unfiltered: Optional[bool] = False
+        unfiltered: bool = False
     ) -> int:
         """
         Faster alternative for ``bulk_update`` with a compatible method
@@ -75,7 +75,11 @@ class FastUpdateQuerySet(QuerySet):
         if not objs:
             return 0
         objs = tuple(objs)
-        fields = set(fields or [])
+        # FIXME: this needs a better handling:
+        # - raise on duplicate field entries
+        # - pass down a sequence type (list)
+        # . change all impls to expect a list
+        fields = list(set(fields or []))
         sanity_check(self.model, objs, fields, 'fast_update', batch_size)
         return fast_update(self, objs, fields, batch_size, unfiltered)
 
@@ -87,7 +91,7 @@ class FastUpdateQuerySet(QuerySet):
         objs: Iterable[Model],
         fields: Iterable[str],
         batch_size: Optional[int] = None,
-        unfiltered: Optional[bool] = False
+        unfiltered: bool = False
     ) -> int:
         """
         Alternative for ``bulk_update`` with a compatible method
@@ -109,7 +113,7 @@ class FastUpdateQuerySet(QuerySet):
         if not objs:
             return 0
         objs = tuple(objs)
-        fields = set(fields or [])
+        fields = list(set(fields or []))
         sanity_check(self.model, objs, fields, 'merged_update', batch_size)
         return merged_update(self, objs, fields, unfiltered=unfiltered)
 
@@ -121,7 +125,7 @@ class FastUpdateQuerySet(QuerySet):
         objs: Iterable[Model],
         fields: Iterable[str],
         batch_size: Optional[int] = None,
-        unfiltered: Optional[bool] = False
+        unfiltered: bool = False
     ) -> int:
         """
         Alternative for ``bulk_update`` with a compatible method
@@ -141,7 +145,7 @@ class FastUpdateQuerySet(QuerySet):
         if not objs:
             return 0
         objs = tuple(objs)
-        fields = set(fields or [])
+        fields = list(set(fields or []))
         sanity_check(self.model, objs, fields, 'flat_update', batch_size)
         return flat_update(self, objs, fields, unfiltered=unfiltered)
 
