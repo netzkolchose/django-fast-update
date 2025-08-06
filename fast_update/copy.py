@@ -790,23 +790,27 @@ def compat_copy_from(
     c: CursorWrapper,
     fr: BinaryIO,
     tname: str,
-    columns: Tuple[str]
+    columns: Sequence[str],
+    exc: List[Any]
 ) -> None:
     """A copy_from operation compatible between psycopg2 and psycopg 3."""
-    if PG3:
-        with c.copy(f"COPY {tname} ({','.join(columns)}) FROM STDIN") as copy:
-            while data := fr.read(65536):
-                copy.write(data)
-    else:
-        c.copy_from(fr, tname, size=65536, columns=columns)
+    try:
+        if PG3:
+            with c.copy(f"COPY {tname} ({','.join(columns)}) FROM STDIN") as copy:
+                while data := fr.read(65536):
+                    copy.write(data)
+        else:
+            c.copy_from(fr, tname, size=65536, columns=columns)
+    except Exception as e:
+        exc.append(e)
 
 
 def copy_from(
     c: CursorWrapper,
     tname: str,
     data: Sequence[models.Model],
-    fnames: Tuple[str],
-    columns: Tuple[str],
+    fnames: Sequence[str],
+    columns: Sequence[str],
     get: attrgetter,
     encs: List[Any],
     encoding: str
@@ -817,6 +821,7 @@ def copy_from(
     use_thread = False
     payload = bytearray()
     lazy: List[Any] = []
+    thread_exception = []
     for o in data:
         payload += '\t'.join([
             f'{enc(el, fname, lazy)}'
@@ -831,10 +836,12 @@ def copy_from(
                 fw = os.fdopen(w, 'wb')
                 t = Thread(
                     target=compat_copy_from,
-                    args=[c.connection.cursor(), fr, tname, columns]
+                    args=[c.connection.cursor(), fr, tname, columns, thread_exception]
                 )
                 t.start()
                 use_thread = True
+            if thread_exception:
+                break
             if lazy:
                 write_lazy(fw, payload, lazy)
                 lazy.clear()
@@ -850,7 +857,7 @@ def copy_from(
                 # carry remaining data forward
                 payload = bytearray(m[pos:])
     if use_thread:
-        if payload:
+        if payload and not thread_exception:
             if lazy:
                 write_lazy(fw, payload, lazy)
             else:
@@ -869,8 +876,10 @@ def copy_from(
             f.seek(0)
         else:
             f = BytesIO(payload)
-        compat_copy_from(c, f, tname, columns)
+        compat_copy_from(c, f, tname, columns, thread_exception)
         f.close()
+    if thread_exception:
+        raise thread_exception[0]
 
 
 def create_columns(column_def: Tuple[Tuple[str, str], ...]) -> str:
@@ -949,3 +958,80 @@ def copy_update(
                 rows_updated = max(rows_updated, ru)
         c.execute(f'DROP TABLE "{tmp_table}"')
     return rows_updated
+
+
+def copy_create(
+    qs: models.QuerySet,
+    objs: Sequence[models.Model],
+    field_encoders: Optional[Dict[str, Any]] = None,
+    encoding: Optional[str] = None,
+) -> Any:
+    qs._for_write = True
+    conn = connections[qs.db]
+    model = qs.model
+    pk_field = model._meta.pk
+    table = model._meta.db_table
+
+    # used for clever filtering the result based on last_id
+    pk_auto = isinstance(
+        pk_field,
+        (models.BigAutoField, models.AutoField, models.SmallAutoField)
+    )
+
+    # separate objects with and w'o pks and do some sanity checks
+    tmp = [[], []]
+    for o in objs:
+        tmp[o.pk is None].append(o)
+    objs_wi_pk, objs_wo_pk = tmp
+    pks = [o.pk for o in objs_wi_pk]
+    if len(set(pks)) < len(pks):
+        raise ValueError(f'copy_create() cannot create duplicate pks.')
+
+    # pull all needed atributes w'o pk field
+    all_fields = [f for f in model._meta.get_fields() if f.concrete and f != pk_field]
+    attnames, colnames = zip(*[(f.attname, f.column) for f in all_fields])
+    encs = ([field_encoders.get(f.attname, get_encoder(f)) for f in all_fields]
+        if field_encoders else [get_encoder(f) for f in all_fields])
+    get = attrgetter(*attnames)
+
+    with transaction.atomic(using=conn.alias, savepoint=False), conn.cursor() as cursor:
+        last_id = None
+        exclude_pks = None
+        # 1. insert objects with pk first
+        if objs_wi_pk:
+            attnames_pk = list(attnames) + [pk_field.attname]
+            colnames_pk = list(colnames) + [pk_field.column]
+            get_pk = attrgetter(*attnames_pk)
+            encs_fk = encs + [field_encoders.get(pk_field.attname, get_encoder(pk_field))
+                              if field_encoders else get_encoder(pk_field)]
+            copy_from(
+                cursor, table, objs_wi_pk, attnames_pk, colnames_pk,
+                get_pk, encs_fk,
+                encoding or get_encoding(cursor.connection)
+            )
+        # 2. insert objects w'o pk
+        if objs_wo_pk:
+            if pk_auto:
+                # filtering for auto int fields
+                last_id = model._base_manager.aggregate(models.Max('pk'))['pk__max']
+            else:
+                # non-standard auto columns (e.g. UUID with gen_random_uuid())
+                # we have no good guess like with int, thus do the full pks exclusion set
+                # this is really wasteful on big tables due to the pk list reduction
+                exclude_pks = list(model._base_manager.all().values_list('pk', flat=True))
+            copy_from(
+                cursor, table, objs, attnames, colnames, get, encs,
+                encoding or get_encoding(cursor.connection)
+            )
+        # 3. create return value as queryset
+        # still under the transaction to catch only the instances of objs
+        q = models.Q()
+        if pks:
+            q = q | models.Q(pk__in=pks)
+        if last_id:
+            q = q | models.Q(pk__gt=last_id)
+        elif exclude_pks:
+            q = q | ~models.Q(pk__in=exclude_pks)
+        if q:
+            return model._base_manager.filter(q)
+        return model._base_manager.all()
