@@ -3,7 +3,7 @@ import sys
 from threading import Thread
 from io import BytesIO
 from binascii import b2a_hex
-from operator import attrgetter
+from operator import attrgetter, itemgetter
 from decimal import Decimal as Decimal
 from datetime import date, datetime, timedelta, time as dt_time
 from json import dumps
@@ -811,9 +811,9 @@ def copy_from(
     data: Sequence[models.Model],
     fnames: Sequence[str],
     columns: Sequence[str],
-    get: attrgetter,
+    get: Union[attrgetter, itemgetter],
     encs: List[Any],
-    encoding: str
+    encoding: str,
 ) -> None:
     """
     Optimized call of cursor.copy_from with threading for bigger change data.
@@ -881,8 +881,86 @@ def copy_from(
     if thread_exception:
         raise thread_exception[0]
 
+COPY_ID = 'copy_id'
 
-def create_columns(column_def: Tuple[Tuple[str, str], ...]) -> str:
+def copy_from_with_copyid(
+    c: CursorWrapper,
+    tname: str,
+    data: Sequence[models.Model],
+    fnames: Sequence[str],
+    columns: List[str],
+    get: Union[attrgetter, itemgetter],
+    encs: List[Any],
+    encoding: str,
+) -> None:
+    """
+    Optimized call of cursor.copy_from with threading for bigger change data.
+    """
+    use_thread = False
+    payload = bytearray()
+    lazy: List[Any] = []
+    thread_exception = []
+    for i, o in enumerate(data):
+        payload += '\t'.join([str(i+1)] + [
+            f'{enc(el, fname, lazy)}'
+            for enc, el, fname in zip(encs, get(o), fnames)
+        ]).encode(encoding)
+        payload += b'\n'
+        if len(payload) > 65535:
+            # if we exceed 64k, switch to threaded chunkwise processing
+            if not use_thread:
+                r, w = os.pipe()
+                fr = os.fdopen(r, 'rb')
+                fw = os.fdopen(w, 'wb')
+                t = Thread(
+                    target=compat_copy_from,
+                    args=[c.connection.cursor(), fr, tname, [COPY_ID] + columns, thread_exception]
+                )
+                t.start()
+                use_thread = True
+            if thread_exception:
+                break
+            if lazy:
+                write_lazy(fw, payload, lazy)
+                lazy.clear()
+                payload = bytearray()
+            else:
+                length = len(payload)
+                m = memoryview(payload)
+                pos = 0
+                while length - pos > 65535:
+                    # write all full 64k chunks (in case some line payload went overboard)
+                    fw.write(m[pos:pos+65536])
+                    pos += 65536
+                # carry remaining data forward
+                payload = bytearray(m[pos:])
+    if use_thread:
+        if payload and not thread_exception:
+            if lazy:
+                write_lazy(fw, payload, lazy)
+            else:
+                fw.write(payload)
+        # closing order important:
+        # - close write end -> threaded copy_from drains pipe and finishes
+        # - wait for thread termination
+        # - close read end
+        fw.close()
+        t.join()
+        fr.close()
+    elif payload:
+        if lazy:
+            f = BytesIO()
+            write_lazy(f, payload, lazy)
+            f.seek(0)
+        else:
+            f = BytesIO(payload)
+        compat_copy_from(c, f, tname, [COPY_ID] + columns, thread_exception)
+        f.close()
+    if thread_exception:
+        raise thread_exception[0]
+
+
+def create_columns(column_def: Sequence[Tuple[str, str]]) -> str:
     """
     Prepare columns for table create as follows:
     - types copied from target table
@@ -960,20 +1038,18 @@ def copy_update(
     return rows_updated
 
 
-def insert_basetable(table, columns, tmp_table):
-    # for non-MT table we only need the first INSERT statement of the CTE
+def insert_base(table, columns, tmp_table, pk_col):
     escaped_cols = ','.join([f'"{col}"' for col in columns])
     return (
         f'INSERT INTO "{table}" ({escaped_cols}) '
         f'SELECT {escaped_cols} '
         f'FROM "{tmp_table}" '
-        f'ORDER BY copy_id'
+        f'ORDER BY copy_id RETURNING "{pk_col}"'
     )
 
 
-def insert_update_pk_cte(table, columns, tmp_table, pk_columns):
+def insert_cte(table, columns, tmp_table, pk_columns):
     pk_col = pk_columns[0]
-    o2o_set = ','.join([f'"{col}" = t1."{pk_col}"' for col in pk_columns])
     escaped_cols = ','.join([f'"{col}"' for col in columns])
     return (
         f'WITH '
@@ -984,225 +1060,190 @@ def insert_update_pk_cte(table, columns, tmp_table, pk_columns):
         f'  ORDER BY copy_id RETURNING "{pk_col}" '
         f'), '
         f't1 AS ( '
-        f'  SELECT "{pk_col}", ROW_NUMBER() OVER (ORDER BY "{pk_col}") AS copy_id '
+        f'  SELECT "{pk_col}", ROW_NUMBER() OVER () AS copy_id '
         f'FROM ins '
         f') '
         f'UPDATE "{tmp_table}" '
-        f'SET {o2o_set} '
+        f'SET "{pk_col}" = t1."{pk_col}" '
         f'FROM t1 '
-        f'WHERE "{tmp_table}".copy_id = t1.copy_id AND "{tmp_table}".copy_id IS NOT NULL'
+        f'WHERE "{tmp_table}".copy_id = t1.copy_id'
     )
 
 
 def insert_from_table(
     tname: str,
     tmp_table: str,
-    columns: List[str]
+    columns: List[str],
+    pk_column: str,
+    o2o_column: str
 ) -> str:
-    escaped_cols = ','.join([f'"{col}"' for col in columns])
-    return f'INSERT INTO {tname} ({escaped_cols}) SELECT {escaped_cols} FROM {tmp_table}'
+    if columns:
+        escaped_cols = ','.join([f'"{col}"' for col in columns])
+        return f'INSERT INTO {tname} ({o2o_column}, {escaped_cols}) SELECT {pk_column},{escaped_cols} FROM {tmp_table}'
+    return f'INSERT INTO {tname} ({o2o_column}) SELECT {pk_column} FROM {tmp_table}'
 
 
-from time import time
+import django
 
-# MT-cabable version:
-# - can do 1:1 obj pk matching
-# - can do ON CONFLICT
-# - at least 2 times slower
+COMPOSITE_SUPPORT = django.VERSION >= (5, 2)
+# FIXME: respect composite pks
+
+
+def fetch_all(cursor, sql):
+    """Helper to work around psycopg2 vs 3 API"""
+    res = cursor.execute(sql)
+    if res:
+        return res.fetchall()
+    return cursor.fetchall()
+
+
 def copy_create(
     qs: models.QuerySet,
     objs: Sequence[models.Model],
     field_encoders: Optional[Dict[str, Any]] = None,
     encoding: Optional[str] = None,
+    returns: bool = False,
+    from_dict: bool = False
 ) -> Any:
-    s = time()
+    """
+    Creates `objs` in the database with the help of COPY FROM. It is meant as a faster
+    alternative to `bulk_create`, but does not resemble its behavior
+    (e.g. no update sidepath on conflicts).
+
+    `returns` is a boolean to indicate, whether the given instances should be patched
+    with a newly created `pk`, default is false. Note that only the pk attribute gets
+    patched, so the instance state is not the same as if you had queried it from the
+    database. Re-query from the database first, if you need fully working model instances.
+
+    `from_dict` allows to use dictionaries as objects. The data dicts must contain all
+    concrete model field attnames as keys and suitable values. If you have spare values
+    as base data, you can patch the dicts to form a full table with this snippet:
+
+    full_data = []
+    fields = [f for f in model._meta.local_fields if f != model._meta.pk]
+    for d in spare_data:
+        defaults = dict((f.attname, f.get_default()) for f in fields)
+        full_data.append({**defaults, **d})
+    copy_create(model.objects.all(), full_data, from_dict=True)
+
+    Note that `copy_create` only operates on the given model and its table. Therefore
+    it is possible to extend existing MT parents with new submodel instances, if you
+    provide the correct o2o value. But this does not work anymore for newly created
+    MT instances without existing parents. Use `copy_create_MT` for those instead.
+    """
     qs._for_write = True
     conn = connections[qs.db]
     model = qs.model
-    parents = model._meta.get_parent_list()[::-1] + [model]
+    if COMPOSITE_SUPPORT and len(model._meta.pk_fields) > 1:
+        raise ValueError('copy_create() does not support composite pks.')
+    table = model._meta.db_table
+    is_mt = len(model._meta.get_parent_list()) > 0
+    pk_field = model._meta.pk
+    pk_col = pk_field.column
+    fields = [f for f in model._meta.local_fields if f != pk_field]
+    attnames = [f.attname for f in fields]
+    colnames = [f.column for f in fields]
+    encs = ([field_encoders.get(f.attname, get_encoder(f)) for f in fields]
+            if field_encoders else [get_encoder(f) for f in fields])
+    get = (itemgetter if from_dict else attrgetter)(*attnames)
 
-    # base model needs
-    basemodel = parents[0]
-    base_pk_field = basemodel._meta.pk
-    base_fields = [f for f in basemodel._meta.get_fields()
-                   if f.concrete and f.model == basemodel and f != base_pk_field]
-    base_colnames = [f.column for f in base_fields]
-    base_table = basemodel._meta.db_table
-
-    # get all relevant field definitions
-    all_fields = [f for f in model._meta.get_fields() if f.concrete]
-    attnames, colnames = zip(*[(f.attname, f.column) for f in all_fields])
-    attnames, colnames, column_def = zip(*[
-        (f.attname, f.column, (f.column, f.db_type(conn)))
-            for f in all_fields])
-    encs = ([field_encoders.get(f.attname, get_encoder(f)) for f in all_fields]
-        if field_encoders else [get_encoder(f) for f in all_fields])
-    column_definitions = create_columns(column_def)
-
-    # hack: patch with copy_id column
-    # the iterator patch below is massively faster...
-    copy_id = 0
-    for o in objs:
-        if not o.pk:
-            copy_id += 1
-            o.copy_id = copy_id
-        else:
-            o.copy_id = None
-    if copy_id:
-        attnames = ['copy_id'] + list(attnames)
-        colnames = ['copy_id'] + list(colnames)
-        encs = [Int] + encs
-        column_definitions = 'copy_id int,' + column_definitions
-    #attnames = ['copy_id'] + list(attnames)
-    #colnames = ['copy_id'] + list(colnames)
-    #g_ = iter(range(1, len(objs)))
-    #encs = [lambda v, fname, lazy:next(g_) if v else NULL] + encs
-    #column_definitions = 'copy_id int,' + column_definitions
-    #model.copy_id = property(lambda self: self.pk)
-    get = attrgetter(*attnames)
-    print('startup:', time()-s)
+    # separate objs in with and w'o pk
+    objs = tuple(objs)
+    tmp = [[], []]
+    objs_wi_pk, objs_wo_pk = tmp
+    if from_dict:
+        for o in objs:
+            tmp[o.get(pk_field.attname) is None].append(o)
+        pks = [o[pk_field.attname] for o in objs_wi_pk]
+    else:
+        for o in objs:
+            tmp[o.pk is None].append(o)
+        pks = [o.pk for o in objs_wi_pk]
+    if len(set(pks)) < len(pks):
+        raise ValueError(f'copy_create() cannot create duplicate pks.')
+    if is_mt and len(objs_wo_pk):
+        raise ValueError(f'copy_create() cannot create MT instances w\'o a pk.')
 
     with transaction.atomic(using=conn.alias, savepoint=False), conn.cursor() as c:
-        tmp_table = f'temp_cu_{model._meta.db_table}'
-        c.execute(f'DROP TABLE IF EXISTS "{tmp_table}"')
-        c.execute(f'CREATE TEMPORARY TABLE "{tmp_table}" ({column_definitions})') # ON COMMIT DROP here?
-        s = time()
-        copy_from(c, tmp_table, objs, attnames, colnames, get, encs,
-            encoding or get_encoding(c.connection))
-        print('COPY:', time()-s)
-        
-        # seems to be mandatory for medium to large dataset
-        c.execute(f'ANALYZE "{tmp_table}" (copy_id)')
-        
-        # insert rows with pk into base table first
-        # TODO...
-        
-        # special case - non-MT model only needs insert in base table
-        if len(parents) == 1:
-            # this currently mimicks the idea of the fast impl to see
-            # the impact of the temp table indirection
-            last_id = basemodel._base_manager.aggregate(models.Max('pk'))['pk__max']
-            pk_columns = [base_pk_field.column]
-            c.execute(insert_basetable(base_table, base_colnames, tmp_table))
-            #pks = res.fetchall()
-            #c.execute(insert_update_pk_cte(base_table, base_colnames, tmp_table, base_pk_field.column))
-            c.execute(f'DROP TABLE "{tmp_table}"')
-            return
-            #return list(basemodel._base_manager.filter(pk__gt=last_id).values_list('pk', flat=True))
-
-        # insert rows w'o pk into base table and update pk column in temp table
-        # the cumbersome row number matching is solved with a CTE
-        if len(parents) > 1:
-            # insert rows w'o pk into base table and update pk column in temp table
-            # the cumbersome row number matching is solved with a CTE
-            pk_columns = [m._meta.pk.column for m in parents]
-            s = time()
-            c.execute(insert_update_pk_cte(base_table, base_colnames, tmp_table, pk_columns))
-            print('CTE:', time()-s)
-            # update on2one ptr fields on tmp table
-            #o2o_columns = ','.join([f'"{m._meta.pk.column}"="{base_pk_field.column}"' for m in parents[1:]])
-            #c.execute(f'UPDATE "{tmp_table}" SET {o2o_columns}')
-            for submodel in parents[1:]:
-                subcolumns = [f.column for f in submodel._meta.get_fields()
-                              if f.concrete and f.model == submodel]
-                s = time()
-                c.execute(insert_from_table(submodel._meta.db_table, tmp_table, subcolumns))
-                print(f'INSERT {submodel}', time()-s)
-
-        # retrieve pks
-        #res = c.execute(f"SELECT copy_id, {base_pk_field.column} FROM {tmp_table} WHERE copy_id IS NOT NULL")
-        #copy2pk = dict(res.fetchall())
-        #print(copy2pk)
-
-        c.execute(f'DROP TABLE "{tmp_table}"')
+        if objs_wi_pk:
+            attnames_pk = [pk_field.attname] + attnames
+            colnames_pk = [pk_field.column] + colnames
+            get_pk = (itemgetter if from_dict else attrgetter)(*attnames_pk)
+            encs_fk = [field_encoders.get(pk_field.attname, get_encoder(pk_field))
+                       if field_encoders else get_encoder(pk_field)] + encs
+            copy_from(
+                c, table, objs_wi_pk, attnames_pk, colnames_pk,
+                get_pk, encs_fk,
+                encoding or get_encoding(c.connection)
+            )
+        if objs_wo_pk:
+            if not returns:
+                copy_from(
+                    c, table, objs_wo_pk, attnames, colnames,
+                    get, encs, encoding or get_encoding(c.connection)
+                )
+            else:
+                # for 1:1 pk to object matching we have use a temp table with
+                # a custom order column copy_id
+                column_def = [(f.column, f.db_type(conn)) for f in fields]
+                column_definitions = f'{COPY_ID} int,' + create_columns(column_def)
+                tmp_table = f'temp_ci_{model._meta.db_table}'
+                c.execute(f'DROP TABLE IF EXISTS "{tmp_table}"')
+                c.execute(f'CREATE TEMPORARY TABLE "{tmp_table}" ({column_definitions})')
+                copy_from_with_copyid(
+                    c, tmp_table, objs_wo_pk, attnames, colnames,
+                    get, encs, encoding or get_encoding(c.connection)
+                )
+                if len(objs_wo_pk) > 100:
+                    c.execute(f'ANALYZE "{tmp_table}" ({COPY_ID})')
+                sql = insert_base(table, colnames, tmp_table, pk_col)
+                new_pks = fetch_all(c, sql)
+                if from_dict:
+                    for o, (pk,) in zip(objs_wo_pk, new_pks):
+                        o[pk_field.attname] = pk
+                else:
+                    for o, (pk,) in zip(objs_wo_pk, new_pks):
+                        o.pk = pk
+                c.execute(f'DROP TABLE "{tmp_table}"')
+    if returns:
+        return objs
 
 
-
-
-
-
-
-
-
-
-
-
-# fastest non-MT version so far
-def copy_create_(
+# TODO: test with multi-level MT models
+def copy_create_MT(
     qs: models.QuerySet,
     objs: Sequence[models.Model],
     field_encoders: Optional[Dict[str, Any]] = None,
     encoding: Optional[str] = None,
+    returns: Optional[str] = None,
+    from_dict: bool = False
 ) -> Any:
     qs._for_write = True
     conn = connections[qs.db]
     model = qs.model
-    pk_field = model._meta.pk
-    table = model._meta.db_table
-
-    # used for clever filtering the result based on last_id
-    pk_auto = isinstance(
-        pk_field,
-        (models.BigAutoField, models.AutoField, models.SmallAutoField)
-    )
-
-    # separate objects with and w'o pks and do some sanity checks
-    tmp = [[], []]
-    for o in objs:
-        tmp[o.pk is None].append(o)
-    objs_wi_pk, objs_wo_pk = tmp
-    pks = [o.pk for o in objs_wi_pk]
-    if len(set(pks)) < len(pks):
-        raise ValueError(f'copy_create() cannot create duplicate pks.')
-
-    # pull all needed atributes w'o pk field
-    all_fields = [f for f in model._meta.get_fields() if f.concrete and f != pk_field]
-    attnames, colnames = zip(*[(f.attname, f.column) for f in all_fields])
-    encs = ([field_encoders.get(f.attname, get_encoder(f)) for f in all_fields]
-        if field_encoders else [get_encoder(f) for f in all_fields])
-    get = attrgetter(*attnames)
-
-    with transaction.atomic(using=conn.alias, savepoint=False), conn.cursor() as cursor:
-        #cursor.execute(f'ANALYZE "{table}" ({pk_field.column})')
-        last_id = None
-        exclude_pks = None
-        # 1. insert objects with pk first (might raise early on conflicts)
-        if objs_wi_pk:
-            attnames_pk = [pk_field.attname] + list(attnames)
-            colnames_pk = [pk_field.column] + list(colnames)
-            get_pk = attrgetter(*attnames_pk)
-            encs_fk = [field_encoders.get(pk_field.attname, get_encoder(pk_field))
-                       if field_encoders else get_encoder(pk_field)] + encs
-            copy_from(
-                cursor, table, objs_wi_pk, attnames_pk, colnames_pk,
-                get_pk, encs_fk,
-                encoding or get_encoding(cursor.connection)
+    parents = model._meta.get_parent_list()[::-1] + [model]
+    with transaction.atomic(using=conn.alias, savepoint=False):
+        objs = copy_create(
+            parents[0]._base_manager.all(),
+            objs,
+            field_encoders=field_encoders,
+            encoding=encoding,
+            returns=True,
+            from_dict=from_dict
+        )
+        base_pk = parents[0]._meta.pk.attname
+        for submodel in parents[1:]:
+            if from_dict:
+                sub_pk = submodel._meta.pk.attname
+                for o in objs:
+                    o[sub_pk] = o[base_pk]
+            copy_create(
+                submodel._base_manager.all(),
+                objs,
+                field_encoders=field_encoders,
+                encoding=encoding,
+                returns=False,
+                from_dict=from_dict
             )
-        # 2. insert objects w'o pk
-        if objs_wo_pk:
-            if pk_auto:
-                # filtering for auto int fields
-                last_id = model._base_manager.aggregate(models.Max('pk'))['pk__max']
-            else:
-                # non-standard auto columns (e.g. UUID with gen_random_uuid())
-                # we have no good guess as with int, thus do the full pk exclusion set
-                # this is really wasteful on big tables due to the pk list reduction
-                exclude_pks = list(model._base_manager.all().values_list('pk', flat=True))
-            copy_from(
-                cursor, table, objs, attnames, colnames, get, encs,
-                encoding or get_encoding(cursor.connection)
-            )
-        # 3. create return value as queryset
-        # still under the transaction to catch only the instances of objs
-        # FIXME: this is still not right, as the qs is eval'ed lazy, thus after COMMIT
-        # might have to return a pk set instead
-        q = models.Q()
-        if pks:
-            q = q | models.Q(pk__in=pks)
-        if last_id:
-            q = q | models.Q(pk__gt=last_id)
-        elif exclude_pks:
-            q = q | ~models.Q(pk__in=exclude_pks)
-        if q:
-            return model._base_manager.filter(q)
-        return model._base_manager.all()
+        if returns:
+            return objs
